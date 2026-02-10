@@ -1,48 +1,57 @@
 pipeline {
     agent any
+
     stages {
+
         stage('Checkout') {
             steps {
-                git url: 'https://github.com/UkaTyuka/pixname-deploy.git', branch: 'main'
+                git branch: 'main',
+                    url: 'https://github.com/UkaTyuka/pixname-deploy.git'
             }
         }
 
-
-        stage('Debug environment') {
-          steps {
-            sh '''
-              whoami
-              uname -a
-              which docker || true
-              docker --version || true
-              docker compose version || true
-              docker-compose --version || true
-              ls -l /var/run/docker.sock || true
-              id || true
-            '''
-          }
-        }
-
-        stage('Build Docker images') {
+        stage('Check Docker on Agent') {
             steps {
-                // Используем docker compose через Docker CLI
-                sh 'docker compose -f Infrastructure/docker-compose.yaml build'
+                sh '''
+                  whoami
+                  docker --version
+                  docker compose version || docker-compose --version
+                  ls -l /var/run/docker.sock
+                '''
             }
         }
-        stage('Run Services') {
+
+        stage('Build images') {
             steps {
-                sh 'docker compose -f Infrastructure/docker-compose.yaml up -d'
+                sh '''
+                  docker compose -f Infrastructure/docker-compose.yaml build
+                '''
             }
         }
-        stage('Healthcheck') {
+
+        stage('Deploy') {
             steps {
-                sh 'docker ps'
+                sh '''
+                  docker compose -f Infrastructure/docker-compose.yaml up -d
+                '''
+            }
+        }
+
+        stage('Status') {
+            steps {
+                sh '''
+                  docker ps
+                '''
             }
         }
     }
+
     post {
         failure {
-            echo 'Pipeline failed!'
+            echo '❌ Pipeline failed'
+        }
+        success {
+            echo '✅ Deploy successful'
         }
     }
 }
