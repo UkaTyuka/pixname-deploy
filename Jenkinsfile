@@ -1,57 +1,76 @@
 pipeline {
-    agent any
+  agent none
 
-    stages {
+  options {
+    skipDefaultCheckout(true)
+    timestamps()
+  }
 
-        stage('Checkout') {
-            steps {
-                git branch: 'main',
-                    url: 'https://github.com/UkaTyuka/pixname-deploy.git'
-            }
-        }
-
-        stage('Check Docker on Agent') {
-            steps {
-                sh '''
-                  whoami
-                  docker --version
-                  docker compose version || docker-compose --version
-                  ls -l /var/run/docker.sock
-                '''
-            }
-        }
-
-        stage('Build images') {
-            steps {
-                sh '''
-                  docker compose -f Infrastructure/docker-compose.yaml build
-                '''
-            }
-        }
-
-        stage('Deploy') {
-            steps {
-                sh '''
-                  docker compose -f Infrastructure/docker-compose.yaml up -d
-                '''
-            }
-        }
-
-        stage('Status') {
-            steps {
-                sh '''
-                  docker ps
-                '''
-            }
-        }
+  stages {
+    stage('Checkout (on agent)') {
+      agent { label 'pixname-node' }   // <-- поменяй на label твоей ноды
+      steps {
+        checkout scm
+        sh '''
+          set -eux
+          whoami
+          hostname
+          git --version
+          docker --version
+          docker-compose --version || true
+          docker compose version || true
+        '''
+      }
     }
 
-    post {
-        failure {
-            echo '❌ Pipeline failed'
-        }
-        success {
-            echo '✅ Deploy successful'
-        }
+    stage('Build images') {
+      agent { label 'pixname-node' }
+      steps {
+        sh '''
+          set -eux
+          cd Infrastructure
+          # Compose v2 обычно: docker compose, но у тебя есть docker-compose v2.23.1
+          docker-compose build
+        '''
+      }
     }
+
+    stage('Deploy (restart)') {
+      agent { label 'pixname-node' }
+      steps {
+        sh '''
+          set -eux
+          cd Infrastructure
+
+          # аккуратный рестарт
+          docker-compose down || true
+          docker-compose up -d
+
+          docker ps
+        '''
+      }
+    }
+
+    stage('Healthcheck') {
+      agent { label 'pixname-node' }
+      steps {
+        sh '''
+          set -eux
+          cd Infrastructure
+
+          # Пример проверки API
+          curl -sf http://localhost:8000/api/health || true
+          curl -sf http://localhost:8000/api/docs >/dev/null || true
+
+          docker-compose ps
+        '''
+      }
+    }
+  }
+
+  post {
+    failure {
+      echo 'Pipeline failed!'
+    }
+  }
 }
