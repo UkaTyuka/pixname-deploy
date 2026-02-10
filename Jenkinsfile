@@ -6,6 +6,23 @@ pipeline {
                 git url: 'https://github.com/UkaTyuka/pixname-deploy.git', branch: 'main'
             }
         }
+
+
+        stage('Debug environment') {
+          steps {
+            sh '''
+              whoami
+              uname -a
+              which docker || true
+              docker --version || true
+              docker compose version || true
+              docker-compose --version || true
+              ls -l /var/run/docker.sock || true
+              id || true
+            '''
+          }
+        }
+
         stage('Build Docker images') {
             steps {
                 // Используем docker compose через Docker CLI
