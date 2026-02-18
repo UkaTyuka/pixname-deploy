@@ -15,6 +15,15 @@ pipeline {
 
     // зеркало провайдеров (чтобы не ходить в registry.terraform.io напрямую)
     TF_MIRROR = "https://terraform-mirror.yandexcloud.net/"
+    OS_AUTH_URL    = "https://OPENSTACK_AUTH_URL_HERE"
+    OS_USERNAME    = "OPENSTACK_USERNAME_HERE"
+    OS_PASSWORD    = "OPENSTACK_PASSWORD_HERE"
+    OS_TENANT_NAME = "OPENSTACK_TENANT_HERE"
+  
+    TF_IMAGE_NAME   = "ubuntu-22.04"
+    TF_FLAVOR_NAME  = "m1.small"
+    TF_NETWORK_NAME = "private"
+    TF_KEYPAIR_NAME = "mykey"
   }
 
   stages {
