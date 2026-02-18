@@ -41,56 +41,41 @@ pipeline {
     }
 
     stage('Terraform: init/apply (create VM)') {
-      steps {
-        sh '''
-          set -eux
+  steps {
+    sh '''
+      set -eu
 
-          # 1) terraformrc с network_mirror (решает региональные блокировки провайдеров)
-          cat > "$WORKSPACE/terraformrc" <<EOF
-provider_installation {
-  network_mirror {
-    url     = "${TF_MIRROR}"
-    include = ["registry.terraform.io/*/*"]
-  }
-  direct {
-    exclude = ["registry.terraform.io/*/*"]
+      docker run --rm \
+        -v "$PWD:/work" \
+        -w /work/terraform \
+        -e TF_IN_AUTOMATION=1 \
+        -e TF_VAR_auth_url="$OS_AUTH_URL" \
+        -e TF_VAR_user_name="$OS_USERNAME" \
+        -e TF_VAR_password="$OS_PASSWORD" \
+        -e TF_VAR_tenant_name="$OS_TENANT_NAME" \
+        -e TF_VAR_image_name="$TF_IMAGE_NAME" \
+        -e TF_VAR_flavor_name="$TF_FLAVOR_NAME" \
+        -e TF_VAR_network_name="$TF_NETWORK_NAME" \
+        -e TF_VAR_keypair_name="$TF_KEYPAIR_NAME" \
+        cr.yandex/crpckn39hn4ef87irtph/terraform:1.6.6 init -input=false
+
+      docker run --rm \
+        -v "$PWD:/work" \
+        -w /work/terraform \
+        -e TF_IN_AUTOMATION=1 \
+        -e TF_VAR_auth_url="$OS_AUTH_URL" \
+        -e TF_VAR_user_name="$OS_USERNAME" \
+        -e TF_VAR_password="$OS_PASSWORD" \
+        -e TF_VAR_tenant_name="$OS_TENANT_NAME" \
+        -e TF_VAR_image_name="$TF_IMAGE_NAME" \
+        -e TF_VAR_flavor_name="$TF_FLAVOR_NAME" \
+        -e TF_VAR_network_name="$TF_NETWORK_NAME" \
+        -e TF_VAR_keypair_name="$TF_KEYPAIR_NAME" \
+        cr.yandex/crpckn39hn4ef87irtph/terraform:1.6.6 apply -auto-approve -input=false
+    '''
   }
 }
-EOF
 
-          # 2) Пример: terraform лежит в папке terraform/
-          # (если у тебя папка называется иначе — просто поменяй путь)
-          test -d terraform
-
-          # 3) Запуск terraform В КОНТЕЙНЕРЕ
-          docker run --rm \
-            -v "$WORKSPACE:/work" -w /work/terraform \
-            -e TF_CLI_CONFIG_FILE=/work/terraformrc \
-            -e TF_IN_AUTOMATION=1 \
-            ${TF_IMAGE} version
-
-          docker run --rm \
-            -v "$WORKSPACE:/work" -w /work/terraform \
-            -e TF_CLI_CONFIG_FILE=/work/terraformrc \
-            -e TF_IN_AUTOMATION=1 \
-            ${TF_IMAGE} init -input=false
-
-          docker run --rm \
-            -v "$WORKSPACE:/work" -w /work/terraform \
-            -e TF_CLI_CONFIG_FILE=/work/terraformrc \
-            -e TF_IN_AUTOMATION=1 \
-            ${TF_IMAGE} apply -auto-approve -input=false
-
-          # 4) Достаём IP из output (output имя подставь своё!)
-          docker run --rm \
-            -v "$WORKSPACE:/work" -w /work/terraform \
-            -e TF_CLI_CONFIG_FILE=/work/terraformrc \
-            ${TF_IMAGE} output -raw public_ip > "$WORKSPACE/vm_ip.txt"
-
-          echo "VM_IP=$(cat $WORKSPACE/vm_ip.txt)"
-        '''
-      }
-    }
 
     stage('Ansible: deploy проект на VM') {
       steps {
