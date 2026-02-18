@@ -1,21 +1,16 @@
-variable "name_prefix" { type = string }
+variable "auth_url" {}
+variable "user_name" {}
+variable "password" { sensitive = true }
+variable "tenant_name" {}
+variable "domain_name" { default = "Default" }
+variable "region"      { default = null }
 
-variable "os_auth_url"     { type = string }
-variable "os_tenant_name"  { type = string }
-variable "os_username"     { type = string }
-variable "os_password"     { type = string }
-variable "os_region"       { type = string }
-variable "os_domain_name"  { type = string }
+variable "vm_name"     { default = "pixname-vm" }
+variable "image_name"  {}
+variable "flavor_name" {}
+variable "network_name" {}
+variable "keypair_name" {}
 
-variable "image_name"   { type = string }
-variable "flavor_name"  { type = string }
-variable "network_name" { type = string }
-
-variable "floating_ip_pool" { type = string }
-
-variable "ssh_public_key" { type = string }
-
-variable "app_port" {
-  type    = number
-  default = 8000
-}
+# security group ingress
+variable "allow_ssh_cidr"  { default = "0.0.0.0/0" }
+variable "allow_http_cidr" { default = "0.0.0.0/0" }
