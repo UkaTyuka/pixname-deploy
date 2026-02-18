@@ -8,13 +8,12 @@ pipeline {
   }
 
   environment {
-    TF_DIR = 'Infrastructure/terraform'
-    ANS_DIR = 'Infrastructure/ansible'
+    TF_DIR   = 'Infrastructure/terraform'
+    ANS_DIR  = 'Infrastructure/ansible'
+    YC_ZONE  = 'ru-central1-a'
+    VM_USER  = 'ubuntu'
 
-    YC_ZONE = 'ru-central1-a'
-    VM_USER = 'ubuntu'
-
-    // Порты твоего проекта (подстрой под свой compose)
+    // куда "смотрим" при smoke test (если нужно)
     APP_PORT = '8000'
     GRAFANA_PORT = '3000'
   }
@@ -31,21 +30,48 @@ pipeline {
       }
     }
 
-    stage('Terraform: init/plan/apply (via Docker)') {
+    stage('Build tools images (Terraform/Ansible) to YCR') {
+      steps {
+        withCredentials([
+          string(credentialsId: 'yc-registry-id', variable: 'REGISTRY_ID')
+        ]) {
+          sh '''
+            set -eux
+
+            # Terraform image (если уже запушен — можно пропустить этот stage)
+            docker pull hashicorp/terraform:1.6.6
+            docker tag hashicorp/terraform:1.6.6 cr.yandex/${REGISTRY_ID}/terraform:1.6.6
+            docker push cr.yandex/${REGISTRY_ID}/terraform:1.6.6
+
+            # Ansible image (вариант 1: быстрое готовое)
+            # Если DockerHub режется с Jenkins-нод — один раз на машине с доступом сделай pull+push в YCR
+            docker pull cytopia/ansible:latest
+            docker tag cytopia/ansible:latest cr.yandex/${REGISTRY_ID}/ansible:latest
+            docker push cr.yandex/${REGISTRY_ID}/ansible:latest
+          '''
+        }
+      }
+    }
+
+    stage('Terraform: init/plan/apply (via YCR image)') {
       steps {
         withCredentials([
           file(credentialsId: 'yc-sa-key', variable: 'YC_KEY_FILE'),
           string(credentialsId: 'yc-cloud-id', variable: 'YC_CLOUD_ID'),
-          string(credentialsId: 'yc-folder-id', variable: 'YC_FOLDER_ID')
+          string(credentialsId: 'yc-folder-id', variable: 'YC_FOLDER_ID'),
+          string(credentialsId: 'yc-registry-id', variable: 'REGISTRY_ID')
         ]) {
           sh '''
             set -eux
             cd "$TF_DIR"
 
-            # Вариант без установки terraform на хост: запускаем terraform в контейнере
-            # Если dockerhub ограничен — см. блок ниже про перенос образа в YCR.
-            TF_IMAGE="hashicorp/terraform:1.6.6"
+            TF_IMAGE="cr.yandex/${REGISTRY_ID}/terraform:1.6.6"
 
+            # ВАЖНО:
+            # Если registry.terraform.io недоступен, положи провайдеры в локальное зеркало
+            # и добавь terraformrc + plugins (см. блок ниже "provider mirror").
+            #
+            # Подключаем key.json внутрь контейнера:
             docker run --rm \
               -v "$PWD:/work" -w /work \
               -v "$YC_KEY_FILE:/work/key.json:ro" \
@@ -76,7 +102,6 @@ pipeline {
               -e TF_IN_AUTOMATION=1 \
               "$TF_IMAGE" apply -input=false -auto-approve tfplan
 
-            # Забираем public ip из output
             docker run --rm \
               -v "$PWD:/work" -w /work \
               -v "$YC_KEY_FILE:/work/key.json:ro" \
@@ -99,59 +124,67 @@ pipeline {
           set -eux
           IP="$(cat "$TF_DIR/public_ip.txt")"
           mkdir -p "$ANS_DIR"
-
           cat > "$ANS_DIR/inventory.ini" <<EOF
-[app]
-$IP ansible_user=${VM_USER} ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+[pixname]
+${IP} ansible_user=${VM_USER} ansible_ssh_common_args='-o StrictHostKeyChecking=no'
 EOF
-
           cat "$ANS_DIR/inventory.ini"
         '''
       }
     }
 
-    stage('Ansible: provision & deploy') {
+    stage('Ansible: provision VM and deploy project') {
       steps {
         withCredentials([
-          sshUserPrivateKey(credentialsId: 'vm-ssh-key', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')
+          file(credentialsId: 'vm-ssh-key', variable: 'SSH_KEY'),
+          string(credentialsId: 'yc-registry-id', variable: 'REGISTRY_ID'),
+          string(credentialsId: 'bot-token', variable: 'BOT_TOKEN')
         ]) {
           sh '''
             set -eux
-            cd "$ANS_DIR"
 
-            # Ставим ansible локально (внутри агента Jenkins). Если нельзя — ниже дам вариант через docker.
-            python3 -m venv .venv
-            . .venv/bin/activate
-            pip install --upgrade pip
-            pip install ansible
+            ANS_IMAGE="cr.yandex/${REGISTRY_ID}/ansible:latest"
 
-            export ANSIBLE_HOST_KEY_CHECKING=False
+            # Кладём приватный ключ, чтобы ansible мог ssh
+            install -m 600 "$SSH_KEY" "$ANS_DIR/id_rsa"
 
-            ansible -i inventory.ini all -m ping --private-key "$SSH_KEY"
+            # Пример: playbook должен
+            # - поставить docker + compose-plugin
+            # - создать /opt/pixname
+            # - залить репу (git clone/pull) или scp архив
+            # - положить env-файлы (tg-bot.env, db.env)
+            # - docker login в YCR (если тянете образы оттуда)
+            # - docker compose up -d
+            #
+            # Т.к. у тебя compose описывает сервисы (db/redis/ml-core/tg-bot/grafana/nginx) :contentReference[oaicite:2]{index=2}
+            # — логично деплоить именно compose’ом на VM.
 
-            ansible-playbook -i inventory.ini playbook.yml \
-              --private-key "$SSH_KEY" \
-              -e "project_src=${WORKSPACE}" \
-              -e "app_port=${APP_PORT}" \
-              -e "grafana_port=${GRAFANA_PORT}"
+            docker run --rm \
+              -v "$PWD/$ANS_DIR:/ans" -w /ans \
+              -e ANSIBLE_HOST_KEY_CHECKING=False \
+              "$ANS_IMAGE" \
+              sh -lc '
+                ansible --version
+                ansible-playbook -i inventory.ini playbook.yml \
+                  --private-key /ans/id_rsa \
+                  --extra-vars "repo_dir=/opt/pixname bot_token=${BOT_TOKEN}"
+              '
           '''
         }
       }
     }
 
-    stage('Healthcheck') {
+    stage('Smoke test') {
       steps {
         sh '''
           set -eux
           IP="$(cat "$TF_DIR/public_ip.txt")"
-          echo "Checking http://$IP:${APP_PORT}/api/health"
+          echo "Try healthcheck on VM: $IP"
 
-          # даём минуту подняться
+          # если у тебя на VM прокинут наружу порт 8000 -> ml-core-service/api,
+          # подстрой URL под твой nginx/compose
           for i in $(seq 1 30); do
-            if curl -sf "http://$IP:${APP_PORT}/api/health" >/dev/null; then
-              echo "OK"
-              exit 0
-            fi
+            curl -fsS "http://${IP}/api/health" && exit 0 || true
             sleep 2
           done
 
@@ -165,9 +198,6 @@ EOF
   post {
     always {
       archiveArtifacts artifacts: 'Infrastructure/terraform/public_ip.txt,Infrastructure/ansible/inventory.ini', allowEmptyArchive: true
-    }
-    failure {
-      echo 'Pipeline failed!'
     }
   }
 }
