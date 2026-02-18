@@ -1,0 +1,9 @@
+deploy_user: ubuntu
+project_dir: /opt/pixname
+repo_url: ""      # будем передавать из Jenkins
+repo_branch: "main"
+compose_project: "infrastructure"
+compose_dir: "{{ project_dir }}/Infrastructure"
+
+# Порты/эндпоинты для healthcheck, если нужно
+healthcheck_url: "http://localhost:8000/api/health"
