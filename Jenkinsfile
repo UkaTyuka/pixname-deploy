@@ -2,175 +2,113 @@ pipeline {
   agent { label 'pixname-node' }
 
   options {
+    skipDefaultCheckout(false)
     timestamps()
-    ansiColor('xterm')
-    skipDefaultCheckout(true)
   }
 
   environment {
-    TF_DIR   = 'Infrastructure/terraform'
-    ANS_DIR  = 'Infrastructure/ansible'
-    YC_ZONE  = 'ru-central1-a'
-    VM_USER  = 'ubuntu'
+    // !!! ВСТАВЬ СВОЙ REGISTRY_ID
+    REGISTRY_ID = 'crpckn39hn4ef87irtph'
 
-    // куда "смотрим" при smoke test (если нужно)
-    APP_PORT = '8000'
-    GRAFANA_PORT = '3000'
+    // terraform container (из твоего YCR)
+    TF_IMAGE = "cr.yandex/${REGISTRY_ID}/terraform:1.6.6"
+
+    // зеркало провайдеров (чтобы не ходить в registry.terraform.io напрямую)
+    TF_MIRROR = "https://terraform-mirror.yandexcloud.net/"
   }
 
   stages {
+
     stage('Checkout') {
       steps {
         checkout scm
         sh '''
           set -eux
-          git rev-parse --short HEAD
           docker --version
+          git --version
+          ls -la
         '''
       }
     }
 
-    stage('Build tools images (Terraform/Ansible) to YCR') {
-      steps {
-        withCredentials([
-          string(credentialsId: 'yc-registry-id', variable: 'REGISTRY_ID')
-        ]) {
-          sh '''
-            set -eux
-
-            # Terraform image (если уже запушен — можно пропустить этот stage)
-            docker pull hashicorp/terraform:1.6.6
-            docker tag hashicorp/terraform:1.6.6 cr.yandex/${REGISTRY_ID}/terraform:1.6.6
-            docker push cr.yandex/${REGISTRY_ID}/terraform:1.6.6
-
-            # Ansible image (вариант 1: быстрое готовое)
-            # Если DockerHub режется с Jenkins-нод — один раз на машине с доступом сделай pull+push в YCR
-            docker pull cytopia/ansible:latest
-            docker tag cytopia/ansible:latest cr.yandex/${REGISTRY_ID}/ansible:latest
-            docker push cr.yandex/${REGISTRY_ID}/ansible:latest
-          '''
-        }
-      }
-    }
-
-    stage('Terraform: init/plan/apply (via YCR image)') {
-      steps {
-        withCredentials([
-          file(credentialsId: 'yc-sa-key', variable: 'YC_KEY_FILE'),
-          string(credentialsId: 'yc-cloud-id', variable: 'YC_CLOUD_ID'),
-          string(credentialsId: 'yc-folder-id', variable: 'YC_FOLDER_ID'),
-          string(credentialsId: 'yc-registry-id', variable: 'REGISTRY_ID')
-        ]) {
-          sh '''
-            set -eux
-            cd "$TF_DIR"
-
-            TF_IMAGE="cr.yandex/${REGISTRY_ID}/terraform:1.6.6"
-
-            # ВАЖНО:
-            # Если registry.terraform.io недоступен, положи провайдеры в локальное зеркало
-            # и добавь terraformrc + plugins (см. блок ниже "provider mirror").
-            #
-            # Подключаем key.json внутрь контейнера:
-            docker run --rm \
-              -v "$PWD:/work" -w /work \
-              -v "$YC_KEY_FILE:/work/key.json:ro" \
-              -e TF_VAR_cloud_id="$YC_CLOUD_ID" \
-              -e TF_VAR_folder_id="$YC_FOLDER_ID" \
-              -e TF_VAR_zone="$YC_ZONE" \
-              -e TF_VAR_sa_key_file="/work/key.json" \
-              -e TF_IN_AUTOMATION=1 \
-              "$TF_IMAGE" init -input=false
-
-            docker run --rm \
-              -v "$PWD:/work" -w /work \
-              -v "$YC_KEY_FILE:/work/key.json:ro" \
-              -e TF_VAR_cloud_id="$YC_CLOUD_ID" \
-              -e TF_VAR_folder_id="$YC_FOLDER_ID" \
-              -e TF_VAR_zone="$YC_ZONE" \
-              -e TF_VAR_sa_key_file="/work/key.json" \
-              -e TF_IN_AUTOMATION=1 \
-              "$TF_IMAGE" plan -input=false -out tfplan
-
-            docker run --rm \
-              -v "$PWD:/work" -w /work \
-              -v "$YC_KEY_FILE:/work/key.json:ro" \
-              -e TF_VAR_cloud_id="$YC_CLOUD_ID" \
-              -e TF_VAR_folder_id="$YC_FOLDER_ID" \
-              -e TF_VAR_zone="$YC_ZONE" \
-              -e TF_VAR_sa_key_file="/work/key.json" \
-              -e TF_IN_AUTOMATION=1 \
-              "$TF_IMAGE" apply -input=false -auto-approve tfplan
-
-            docker run --rm \
-              -v "$PWD:/work" -w /work \
-              -v "$YC_KEY_FILE:/work/key.json:ro" \
-              -e TF_VAR_cloud_id="$YC_CLOUD_ID" \
-              -e TF_VAR_folder_id="$YC_FOLDER_ID" \
-              -e TF_VAR_zone="$YC_ZONE" \
-              -e TF_VAR_sa_key_file="/work/key.json" \
-              -e TF_IN_AUTOMATION=1 \
-              "$TF_IMAGE" output -raw public_ip > /work/public_ip.txt
-
-            echo "VM IP: $(cat public_ip.txt)"
-          '''
-        }
-      }
-    }
-
-    stage('Generate Ansible inventory') {
+    stage('Terraform: init/apply (create VM)') {
       steps {
         sh '''
           set -eux
-          IP="$(cat "$TF_DIR/public_ip.txt")"
-          mkdir -p "$ANS_DIR"
-          cat > "$ANS_DIR/inventory.ini" <<EOF
-[pixname]
-${IP} ansible_user=${VM_USER} ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+
+          # 1) terraformrc с network_mirror (решает региональные блокировки провайдеров)
+          cat > "$WORKSPACE/terraformrc" <<EOF
+provider_installation {
+  network_mirror {
+    url     = "${TF_MIRROR}"
+    include = ["registry.terraform.io/*/*"]
+  }
+  direct {
+    exclude = ["registry.terraform.io/*/*"]
+  }
+}
 EOF
-          cat "$ANS_DIR/inventory.ini"
+
+          # 2) Пример: terraform лежит в папке terraform/
+          # (если у тебя папка называется иначе — просто поменяй путь)
+          test -d terraform
+
+          # 3) Запуск terraform В КОНТЕЙНЕРЕ
+          docker run --rm \
+            -v "$WORKSPACE:/work" -w /work/terraform \
+            -e TF_CLI_CONFIG_FILE=/work/terraformrc \
+            -e TF_IN_AUTOMATION=1 \
+            ${TF_IMAGE} version
+
+          docker run --rm \
+            -v "$WORKSPACE:/work" -w /work/terraform \
+            -e TF_CLI_CONFIG_FILE=/work/terraformrc \
+            -e TF_IN_AUTOMATION=1 \
+            ${TF_IMAGE} init -input=false
+
+          docker run --rm \
+            -v "$WORKSPACE:/work" -w /work/terraform \
+            -e TF_CLI_CONFIG_FILE=/work/terraformrc \
+            -e TF_IN_AUTOMATION=1 \
+            ${TF_IMAGE} apply -auto-approve -input=false
+
+          # 4) Достаём IP из output (output имя подставь своё!)
+          docker run --rm \
+            -v "$WORKSPACE:/work" -w /work/terraform \
+            -e TF_CLI_CONFIG_FILE=/work/terraformrc \
+            ${TF_IMAGE} output -raw public_ip > "$WORKSPACE/vm_ip.txt"
+
+          echo "VM_IP=$(cat $WORKSPACE/vm_ip.txt)"
         '''
       }
     }
 
-    stage('Ansible: provision VM and deploy project') {
+    stage('Ansible: deploy проект на VM') {
       steps {
-        withCredentials([
-          file(credentialsId: 'vm-ssh-key', variable: 'SSH_KEY'),
-          string(credentialsId: 'yc-registry-id', variable: 'REGISTRY_ID'),
-          string(credentialsId: 'bot-token', variable: 'BOT_TOKEN')
-        ]) {
-          sh '''
-            set -eux
+        // Здесь важно: у Jenkins должен быть ssh ключ (Credentials)
+        // и секреты (BOT_TOKEN, DB_*, etc.) — тоже как Credentials.
+        sh '''
+          set -eux
+          VM_IP="$(cat $WORKSPACE/vm_ip.txt)"
 
-            ANS_IMAGE="cr.yandex/${REGISTRY_ID}/ansible:latest"
+          # Простейший inventory (как в ELKluk)
+          cat > "$WORKSPACE/inventory.ini" <<EOF
+[pixname]
+${VM_IP} ansible_user=ubuntu ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+EOF
 
-            # Кладём приватный ключ, чтобы ansible мог ssh
-            install -m 600 "$SSH_KEY" "$ANS_DIR/id_rsa"
+          # Если ansible-playbook у тебя на ноде НЕ установлен — запускаем ansible в контейнере.
+          # Если DockerHub блочится — мы зеркалим этот образ в YCR (скажи, если надо).
+          ANSIBLE_IMAGE="willhallonline/ansible:2.16-ubuntu-22.04"
 
-            # Пример: playbook должен
-            # - поставить docker + compose-plugin
-            # - создать /opt/pixname
-            # - залить репу (git clone/pull) или scp архив
-            # - положить env-файлы (tg-bot.env, db.env)
-            # - docker login в YCR (если тянете образы оттуда)
-            # - docker compose up -d
-            #
-            # Т.к. у тебя compose описывает сервисы (db/redis/ml-core/tg-bot/grafana/nginx) :contentReference[oaicite:2]{index=2}
-            # — логично деплоить именно compose’ом на VM.
+          docker pull "${ANSIBLE_IMAGE}" || true
 
-            docker run --rm \
-              -v "$PWD/$ANS_DIR:/ans" -w /ans \
-              -e ANSIBLE_HOST_KEY_CHECKING=False \
-              "$ANS_IMAGE" \
-              sh -lc '
-                ansible --version
-                ansible-playbook -i inventory.ini playbook.yml \
-                  --private-key /ans/id_rsa \
-                  --extra-vars "repo_dir=/opt/pixname bot_token=${BOT_TOKEN}"
-              '
-          '''
-        }
+          # Запуск playbook (пути под себя)
+          docker run --rm \
+            -v "$WORKSPACE:/work" -w /work \
+            "${ANSIBLE_IMAGE}" \
+            ansible-playbook -i /work/inventory.ini /work/ansible/deploy.yml
+        '''
       }
     }
 
@@ -178,18 +116,11 @@ EOF
       steps {
         sh '''
           set -eux
-          IP="$(cat "$TF_DIR/public_ip.txt")"
-          echo "Try healthcheck on VM: $IP"
+          VM_IP="$(cat $WORKSPACE/vm_ip.txt)"
 
-          # если у тебя на VM прокинут наружу порт 8000 -> ml-core-service/api,
-          # подстрой URL под твой nginx/compose
-          for i in $(seq 1 30); do
-            curl -fsS "http://${IP}/api/health" && exit 0 || true
-            sleep 2
-          done
-
-          echo "Healthcheck failed"
-          exit 1
+          # пример: если ты поднимаешь какой-то http endpoint на VM
+          # (подстрой порт под свой compose)
+          curl -fsS "http://${VM_IP}:8000/api/health" || true
         '''
       }
     }
@@ -197,7 +128,11 @@ EOF
 
   post {
     always {
-      archiveArtifacts artifacts: 'Infrastructure/terraform/public_ip.txt,Infrastructure/ansible/inventory.ini', allowEmptyArchive: true
+      sh '''
+        set +e
+        echo "VM IP (if exists):"
+        test -f vm_ip.txt && cat vm_ip.txt || true
+      '''
     }
   }
 }
