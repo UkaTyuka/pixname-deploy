@@ -1,162 +1,162 @@
 pipeline {
-  agent any
+  agent { label 'pixname-node' }
 
   options {
-    skipDefaultCheckout(true)
     timestamps()
+    ansiColor('xterm')
+    skipDefaultCheckout(true)
   }
 
   environment {
-    // ПАПКИ В РЕПО
-    TF_DIR = "terraform"
-    ANSIBLE_DIR = "ansible"
-    REGISTRY_ID = "crpckn39hn4ef87irtph"
-    // Terraform Docker image (лучше зеркалировать в CR, чтобы не зависеть от внешних регистри)
-    // Вариант А: из DockerHub (если доступен):
-    // TF_IMAGE = "hashicorp/terraform:1.6.6"
-    // Вариант Б: из Yandex Container Registry (рекомендую):
-    TF_IMAGE = "cr.yandex/${REGISTRY_ID}/terraform:1.6.6"
+    TF_DIR = 'Infrastructure/terraform'
+    ANS_DIR = 'Infrastructure/ansible'
 
-    // Ansible Docker image (можно зеркалировать при желании)
-    ANSIBLE_IMAGE = "cytopia/ansible:2.16"
+    YC_ZONE = 'ru-central1-a'
+    VM_USER = 'ubuntu'
 
-    // Имя inventory, который создадим на лету
-    INVENTORY = ".jenkins_inventory.ini"
+    // Порты твоего проекта (подстрой под свой compose)
+    APP_PORT = '8000'
+    GRAFANA_PORT = '3000'
   }
 
   stages {
-
     stage('Checkout') {
-      agent { label 'pixname-node' }
       steps {
         checkout scm
         sh '''
           set -eux
-          whoami
-          hostname
-          git --version
+          git rev-parse --short HEAD
           docker --version
         '''
       }
     }
 
-    stage('Terraform Init') {
-      agent { label 'pixname-node' }
+    stage('Terraform: init/plan/apply (via Docker)') {
       steps {
-        // Если terraform использует облачные креды (например YC), добавь credentials ниже (см. секцию 3)
-        sh '''
-          set -eux
-          test -d "$TF_DIR"
-          docker run --rm \
-            -v "$PWD/$TF_DIR:/workspace" \
-            -w /workspace \
-            "$TF_IMAGE" init
-        '''
-      }
-    }
-
-    stage('Terraform Apply (Create VM)') {
-      agent { label 'pixname-node' }
-      steps {
-        sh '''
-          set -eux
-          docker run --rm \
-            -v "$PWD/$TF_DIR:/workspace" \
-            -w /workspace \
-            "$TF_IMAGE" apply -auto-approve
-        '''
-      }
-    }
-
-    stage('Get VM IP from Terraform output') {
-      agent { label 'pixname-node' }
-      steps {
-        script {
-          // Ожидаем, что в terraform есть output "vm_ip" или "public_ip"
-          // Подстрой под свой output name (внизу есть быстрый способ проверить)
-          def ip = sh(
-            script: """
-              set -e
-              docker run --rm \
-                -v "$PWD/$TF_DIR:/workspace" \
-                -w /workspace \
-                "$TF_IMAGE" output -raw vm_ip 2>/dev/null || \
-              docker run --rm \
-                -v "$PWD/$TF_DIR:/workspace" \
-                -w /workspace \
-                "$TF_IMAGE" output -raw public_ip
-            """,
-            returnStdout: true
-          ).trim()
-
-          if (!ip) {
-            error("Не смог получить IP из terraform output. Проверь outputs в terraform (vm_ip/public_ip).")
-          }
-
-          env.VM_IP = ip
-          echo "VM_IP=${env.VM_IP}"
-        }
-      }
-    }
-
-    stage('Wait SSH') {
-      agent { label 'pixname-node' }
-      steps {
-        // Тут лучше использовать SSH key из Jenkins credentials (см. секцию 3)
-        // И SSH_USER должен соответствовать образу VM (ubuntu/yc-user и т.п.)
-        withCredentials([sshUserPrivateKey(credentialsId: 'vm-ssh-key', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+        withCredentials([
+          file(credentialsId: 'yc-sa-key', variable: 'YC_KEY_FILE'),
+          string(credentialsId: 'yc-cloud-id', variable: 'YC_CLOUD_ID'),
+          string(credentialsId: 'yc-folder-id', variable: 'YC_FOLDER_ID')
+        ]) {
           sh '''
             set -eux
-            echo "Waiting SSH on $VM_IP ..."
-            for i in $(seq 1 60); do
-              if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i "$SSH_KEY" "$SSH_USER@$VM_IP" "echo ok" >/dev/null 2>&1; then
-                echo "SSH is up"
-                exit 0
-              fi
-              sleep 5
-            done
-            echo "SSH not ready after timeout"
-            exit 1
+            cd "$TF_DIR"
+
+            # Вариант без установки terraform на хост: запускаем terraform в контейнере
+            # Если dockerhub ограничен — см. блок ниже про перенос образа в YCR.
+            TF_IMAGE="hashicorp/terraform:1.6.6"
+
+            docker run --rm \
+              -v "$PWD:/work" -w /work \
+              -v "$YC_KEY_FILE:/work/key.json:ro" \
+              -e TF_VAR_cloud_id="$YC_CLOUD_ID" \
+              -e TF_VAR_folder_id="$YC_FOLDER_ID" \
+              -e TF_VAR_zone="$YC_ZONE" \
+              -e TF_VAR_sa_key_file="/work/key.json" \
+              -e TF_IN_AUTOMATION=1 \
+              "$TF_IMAGE" init -input=false
+
+            docker run --rm \
+              -v "$PWD:/work" -w /work \
+              -v "$YC_KEY_FILE:/work/key.json:ro" \
+              -e TF_VAR_cloud_id="$YC_CLOUD_ID" \
+              -e TF_VAR_folder_id="$YC_FOLDER_ID" \
+              -e TF_VAR_zone="$YC_ZONE" \
+              -e TF_VAR_sa_key_file="/work/key.json" \
+              -e TF_IN_AUTOMATION=1 \
+              "$TF_IMAGE" plan -input=false -out tfplan
+
+            docker run --rm \
+              -v "$PWD:/work" -w /work \
+              -v "$YC_KEY_FILE:/work/key.json:ro" \
+              -e TF_VAR_cloud_id="$YC_CLOUD_ID" \
+              -e TF_VAR_folder_id="$YC_FOLDER_ID" \
+              -e TF_VAR_zone="$YC_ZONE" \
+              -e TF_VAR_sa_key_file="/work/key.json" \
+              -e TF_IN_AUTOMATION=1 \
+              "$TF_IMAGE" apply -input=false -auto-approve tfplan
+
+            # Забираем public ip из output
+            docker run --rm \
+              -v "$PWD:/work" -w /work \
+              -v "$YC_KEY_FILE:/work/key.json:ro" \
+              -e TF_VAR_cloud_id="$YC_CLOUD_ID" \
+              -e TF_VAR_folder_id="$YC_FOLDER_ID" \
+              -e TF_VAR_zone="$YC_ZONE" \
+              -e TF_VAR_sa_key_file="/work/key.json" \
+              -e TF_IN_AUTOMATION=1 \
+              "$TF_IMAGE" output -raw public_ip > /work/public_ip.txt
+
+            echo "VM IP: $(cat public_ip.txt)"
           '''
         }
       }
     }
 
-    stage('Ansible Provision + Deploy') {
-      agent { label 'pixname-node' }
+    stage('Generate Ansible inventory') {
       steps {
-        withCredentials([sshUserPrivateKey(credentialsId: 'vm-ssh-key', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
-          sh '''
-            set -eux
-            test -d "$ANSIBLE_DIR"
+        sh '''
+          set -eux
+          IP="$(cat "$TF_DIR/public_ip.txt")"
+          mkdir -p "$ANS_DIR"
 
-            # inventory на лету
-            cat > "$INVENTORY" <<EOF
+          cat > "$ANS_DIR/inventory.ini" <<EOF
 [app]
-$VM_IP ansible_user=$SSH_USER ansible_ssh_private_key_file=/tmp/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+$IP ansible_user=${VM_USER} ansible_ssh_common_args='-o StrictHostKeyChecking=no'
 EOF
 
-            # Запускаем ansible из docker, подсовывая ключ внутрь контейнера
-            docker run --rm \
-              -v "$PWD/$ANSIBLE_DIR:/ansible" \
-              -v "$PWD/$INVENTORY:/ansible/$INVENTORY" \
-              -v "$SSH_KEY:/tmp/id_rsa:ro" \
-              -w /ansible \
-              "$ANSIBLE_IMAGE" \
-              ansible-playbook -i "$INVENTORY" site.yml
+          cat "$ANS_DIR/inventory.ini"
+        '''
+      }
+    }
+
+    stage('Ansible: provision & deploy') {
+      steps {
+        withCredentials([
+          sshUserPrivateKey(credentialsId: 'vm-ssh-key', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')
+        ]) {
+          sh '''
+            set -eux
+            cd "$ANS_DIR"
+
+            # Ставим ansible локально (внутри агента Jenkins). Если нельзя — ниже дам вариант через docker.
+            python3 -m venv .venv
+            . .venv/bin/activate
+            pip install --upgrade pip
+            pip install ansible
+
+            export ANSIBLE_HOST_KEY_CHECKING=False
+
+            ansible -i inventory.ini all -m ping --private-key "$SSH_KEY"
+
+            ansible-playbook -i inventory.ini playbook.yml \
+              --private-key "$SSH_KEY" \
+              -e "project_src=${WORKSPACE}" \
+              -e "app_port=${APP_PORT}" \
+              -e "grafana_port=${GRAFANA_PORT}"
           '''
         }
       }
     }
 
-    stage('Show Result') {
-      agent { label 'pixname-node' }
+    stage('Healthcheck') {
       steps {
         sh '''
           set -eux
-          echo "Deployed on VM: $VM_IP"
-          # если у тебя есть web endpoint - добавь curl сюда
-          # например: curl -sf "http://$VM_IP:8000/api/health" || true
+          IP="$(cat "$TF_DIR/public_ip.txt")"
+          echo "Checking http://$IP:${APP_PORT}/api/health"
+
+          # даём минуту подняться
+          for i in $(seq 1 30); do
+            if curl -sf "http://$IP:${APP_PORT}/api/health" >/dev/null; then
+              echo "OK"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Healthcheck failed"
+          exit 1
         '''
       }
     }
@@ -164,15 +164,7 @@ EOF
 
   post {
     always {
-      // показать кратко что реально поднято terraform
-      sh '''
-        set +e
-        echo "Terraform show (first 120 lines):"
-        docker run --rm \
-          -v "$PWD/$TF_DIR:/workspace" \
-          -w /workspace \
-          "$TF_IMAGE" show -no-color | head -n 120 || true
-      '''
+      archiveArtifacts artifacts: 'Infrastructure/terraform/public_ip.txt,Infrastructure/ansible/inventory.ini', allowEmptyArchive: true
     }
     failure {
       echo 'Pipeline failed!'
