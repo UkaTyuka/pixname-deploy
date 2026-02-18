@@ -1,66 +1,98 @@
 pipeline {
-  agent { label 'pixname-node' }
+  agent none
 
-  options { timestamps() }
+  options {
+    skipDefaultCheckout(true)
+    timestamps()
+  }
 
   environment {
-    TF_IN_AUTOMATION = "true"
+    // ПАПКИ В РЕПО
     TF_DIR = "terraform"
-    ANS_DIR = "ansible"
+    ANSIBLE_DIR = "ansible"
+
+    // Terraform Docker image (лучше зеркалировать в CR, чтобы не зависеть от внешних регистри)
+    // Вариант А: из DockerHub (если доступен):
+    // TF_IMAGE = "hashicorp/terraform:1.6.6"
+    // Вариант Б: из Yandex Container Registry (рекомендую):
+    TF_IMAGE = "cr.yandex/${REGISTRY_ID}/terraform:1.6.6"
+
+    // Ansible Docker image (можно зеркалировать при желании)
+    ANSIBLE_IMAGE = "cytopia/ansible:2.16"
+
+    // Имя inventory, который создадим на лету
+    INVENTORY = ".jenkins_inventory.ini"
   }
 
   stages {
+
     stage('Checkout') {
-      steps { checkout scm }
+      agent { label 'pixname-node' }
+      steps {
+        checkout scm
+        sh '''
+          set -eux
+          whoami
+          hostname
+          git --version
+          docker --version
+        '''
+      }
     }
 
     stage('Terraform Init') {
+      agent { label 'pixname-node' }
       steps {
+        // Если terraform использует облачные креды (например YC), добавь credentials ниже (см. секцию 3)
         sh '''
           set -eux
-          cd "$TF_DIR"
-          terraform init
+          test -d "$TF_DIR"
+          docker run --rm \
+            -v "$PWD/$TF_DIR:/workspace" \
+            -w /workspace \
+            "$TF_IMAGE" init
         '''
       }
     }
 
     stage('Terraform Apply (Create VM)') {
+      agent { label 'pixname-node' }
       steps {
-        withCredentials([
-          string(credentialsId: 'os_auth_url', variable: 'OS_AUTH_URL'),
-          string(credentialsId: 'os_tenant_name', variable: 'OS_TENANT_NAME'),
-          string(credentialsId: 'os_username', variable: 'OS_USERNAME'),
-          string(credentialsId: 'os_password', variable: 'OS_PASSWORD'),
-          string(credentialsId: 'os_region', variable: 'OS_REGION'),
-          string(credentialsId: 'os_domain_name', variable: 'OS_DOMAIN_NAME'),
-          string(credentialsId: 'ssh_public_key', variable: 'SSH_PUBLIC_KEY')
-        ]) {
-          sh '''
-            set -eux
-            cd "$TF_DIR"
-
-            terraform apply -auto-approve \
-              -var "name_prefix=pixname-${BUILD_NUMBER}" \
-              -var "os_auth_url=${OS_AUTH_URL}" \
-              -var "os_tenant_name=${OS_TENANT_NAME}" \
-              -var "os_username=${OS_USERNAME}" \
-              -var "os_password=${OS_PASSWORD}" \
-              -var "os_region=${OS_REGION}" \
-              -var "os_domain_name=${OS_DOMAIN_NAME}" \
-              -var "ssh_public_key=${SSH_PUBLIC_KEY}" \
-              -var "image_name=Ubuntu 22.04" \
-              -var "flavor_name=m1.small" \
-              -var "network_name=private" \
-              -var "floating_ip_pool=public"
-          '''
-        }
+        sh '''
+          set -eux
+          docker run --rm \
+            -v "$PWD/$TF_DIR:/workspace" \
+            -w /workspace \
+            "$TF_IMAGE" apply -auto-approve
+        '''
       }
     }
 
-    stage('Get VM IP') {
+    stage('Get VM IP from Terraform output') {
+      agent { label 'pixname-node' }
       steps {
         script {
-          def ip = sh(script: "cd ${env.TF_DIR} && terraform output -raw vm_ip", returnStdout: true).trim()
+          // Ожидаем, что в terraform есть output "vm_ip" или "public_ip"
+          // Подстрой под свой output name (внизу есть быстрый способ проверить)
+          def ip = sh(
+            script: """
+              set -e
+              docker run --rm \
+                -v "$PWD/$TF_DIR:/workspace" \
+                -w /workspace \
+                "$TF_IMAGE" output -raw vm_ip 2>/dev/null || \
+              docker run --rm \
+                -v "$PWD/$TF_DIR:/workspace" \
+                -w /workspace \
+                "$TF_IMAGE" output -raw public_ip
+            """,
+            returnStdout: true
+          ).trim()
+
+          if (!ip) {
+            error("Не смог получить IP из terraform output. Проверь outputs в terraform (vm_ip/public_ip).")
+          }
+
           env.VM_IP = ip
           echo "VM_IP=${env.VM_IP}"
         }
@@ -68,71 +100,82 @@ pipeline {
     }
 
     stage('Wait SSH') {
+      agent { label 'pixname-node' }
       steps {
-        sh '''
-          set -eux
-          for i in $(seq 1 60); do
-            nc -zv "$VM_IP" 22 && exit 0
-            sleep 5
-          done
-          exit 1
-        '''
+        // Тут лучше использовать SSH key из Jenkins credentials (см. секцию 3)
+        // И SSH_USER должен соответствовать образу VM (ubuntu/yc-user и т.п.)
+        withCredentials([sshUserPrivateKey(credentialsId: 'vm-ssh-key', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+          sh '''
+            set -eux
+            echo "Waiting SSH on $VM_IP ..."
+            for i in $(seq 1 60); do
+              if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i "$SSH_KEY" "$SSH_USER@$VM_IP" "echo ok" >/dev/null 2>&1; then
+                echo "SSH is up"
+                exit 0
+              fi
+              sleep 5
+            done
+            echo "SSH not ready after timeout"
+            exit 1
+          '''
+        }
       }
     }
 
     stage('Ansible Provision + Deploy') {
+      agent { label 'pixname-node' }
       steps {
-        withCredentials([
-          sshUserPrivateKey(credentialsId: 'vm_ssh_key', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER'),
-          string(credentialsId: 'bot-token', variable: 'BOT_TOKEN'),
-          string(credentialsId: 'db-user', variable: 'DB_USER'),
-          string(credentialsId: 'db-pass', variable: 'DB_PASSWORD'),
-          string(credentialsId: 'db-name', variable: 'DB_NAME')
-        ]) {
+        withCredentials([sshUserPrivateKey(credentialsId: 'vm-ssh-key', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
           sh '''
             set -eux
-            cd "$ANS_DIR"
+            test -d "$ANSIBLE_DIR"
 
-            # inventory из шаблона
-            cat > inventory.ini <<EOF
-            [app]
-            ${VM_IP} ansible_user=${SSH_USER} ansible_ssh_private_key_file=${SSH_KEY}
-            EOF
+            # inventory на лету
+            cat > "$INVENTORY" <<EOF
+[app]
+$VM_IP ansible_user=$SSH_USER ansible_ssh_private_key_file=/tmp/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+EOF
 
-            # repo url берём из текущего SCM
-            REPO_URL="$(git config --get remote.origin.url)"
-
-            # прокидываем секреты как env (ansible lookup('env',..))
-            export BOT_TOKEN="${BOT_TOKEN}"
-            export DB_USER="${DB_USER}"
-            export DB_PASSWORD="${DB_PASSWORD}"
-            export DB_NAME="${DB_NAME}"
-            export DB_HOST="db"
-
-            ansible-playbook -i inventory.ini playbook.yml \
-              -e "repo_url=${REPO_URL}" \
-              -e "repo_branch=${BRANCH_NAME:-main}"
+            # Запускаем ansible из docker, подсовывая ключ внутрь контейнера
+            docker run --rm \
+              -v "$PWD/$ANSIBLE_DIR:/ansible" \
+              -v "$PWD/$INVENTORY:/ansible/$INVENTORY" \
+              -v "$SSH_KEY:/tmp/id_rsa:ro" \
+              -w /ansible \
+              "$ANSIBLE_IMAGE" \
+              ansible-playbook -i "$INVENTORY" site.yml
           '''
         }
       }
     }
 
     stage('Show Result') {
+      agent { label 'pixname-node' }
       steps {
-        echo "Deployed on VM: ${env.VM_IP}"
+        sh '''
+          set -eux
+          echo "Deployed on VM: $VM_IP"
+          # если у тебя есть web endpoint - добавь curl сюда
+          # например: curl -sf "http://$VM_IP:8000/api/health" || true
+        '''
       }
     }
   }
 
   post {
     always {
+      // показать кратко что реально поднято terraform
       sh '''
-        echo "Terraform state:"
-        (cd "$TF_DIR" && terraform show -no-color | head -n 80) || true
+        set +e
+        echo "Terraform show (first 120 lines):"
+        docker run --rm \
+          -v "$PWD/$TF_DIR:/workspace" \
+          -w /workspace \
+          "$TF_IMAGE" show -no-color | head -n 120 || true
       '''
     }
     failure {
-      echo "FAILED"
+      echo 'Pipeline failed!'
     }
   }
 }
