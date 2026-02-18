@@ -1,0 +1,10 @@
+- name: Configure server
+  hosts: all
+  become: yes
+
+  tasks:
+    - name: Ensure Docker is installed
+      command: docker --version
+
+    - name: Ensure Docker Compose is available
+      command: docker-compose --version
