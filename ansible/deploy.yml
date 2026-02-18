@@ -1,0 +1,72 @@
+- name: Deploy pixname (tg-bot + ml + db) on VM
+  hosts: pixname
+  become: true
+
+  vars:
+    app_dir: /opt/pixname
+    repo_url: "https://github.com/UkaTyuka/pixname-deploy.git"
+    repo_branch: "main"
+    compose_dir: "{{ app_dir }}/Infrastructure"
+
+  tasks:
+    - name: Install packages
+      apt:
+        update_cache: yes
+        name:
+          - git
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+
+    - name: Install Docker (official convenience script)
+      shell: |
+        set -eux
+        if ! command -v docker >/dev/null 2>&1; then
+          curl -fsSL https://get.docker.com | sh
+        fi
+        usermod -aG docker ubuntu || true
+      args:
+        executable: /bin/bash
+
+    - name: Install docker compose plugin
+      apt:
+        name: docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Create app dir
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Checkout repo
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ app_dir }}"
+        version: "{{ repo_branch }}"
+        force: yes
+
+    # ВАЖНО: твои env-файлы. Лучше хранить без секретов в репо, а секреты прокидывать из Jenkins.
+    # Но если для демо ок — можно использовать то, что уже лежит в Infrastructure/*.env
+
+    - name: Ensure compose files exist
+      stat:
+        path: "{{ compose_dir }}/docker-compose.yml"
+      register: compose_stat
+
+    - name: Fail if docker-compose.yml not found
+      fail:
+        msg: "docker-compose.yml not found in {{ compose_dir }}"
+      when: not compose_stat.stat.exists
+
+    - name: Compose up
+      shell: |
+        set -eux
+        cd "{{ compose_dir }}"
+        docker compose pull || true
+        docker compose up -d --build
+        docker compose ps
+      args:
+        executable: /bin/bash
