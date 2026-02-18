@@ -10,7 +10,7 @@ pipeline {
     // ПАПКИ В РЕПО
     TF_DIR = "terraform"
     ANSIBLE_DIR = "ansible"
-
+    REGISTRY_ID = "crpckn39hn4ef87irtph"
     // Terraform Docker image (лучше зеркалировать в CR, чтобы не зависеть от внешних регистри)
     // Вариант А: из DockerHub (если доступен):
     // TF_IMAGE = "hashicorp/terraform:1.6.6"
