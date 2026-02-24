@@ -89,8 +89,8 @@
         done
       args:
         chdir: "{{ app_dir }}/Infrastructure"
-      retries: 10
-      delay: 3
+      retries: 20
+      delay: 5
       ignore_errors: yes
 
     - name: Run Alembic migrations
@@ -110,7 +110,7 @@
 
     - name: Wait for services to start
       wait_for:
-        timeout: 30
+        timeout: 50
       delegate_to: localhost
 
     - name: Show completion message
