@@ -58,8 +58,7 @@
         msg: "compose_dir {{ compose_dir }} not found. Check repo structure / path to docker-compose.yml"
       when: not compose_dir_stat.stat.exists
 
-    # Если нужны секреты (BOT_TOKEN, DB creds) — для учебки можно так.
-    # Jenkins может прокинуть переменные окружения на ansible-agent, а ansible подставит их в .env
+    
     - name: Write env file for compose
       copy:
         dest: "{{ compose_dir }}/.env"
@@ -76,7 +75,12 @@
         set -eux
         cd "{{ compose_dir }}"
         docker-compose -p "{{ compose_project }}" down || true
-
+    
+    - name: Create external docker volume if not exists
+      shell: |
+        docker volume inspect pixname_pgdata >/dev/null 2>&1 || \
+        docker volume create pixname_pgdata
+    
     - name: Compose up
       shell: |
         set -eux
