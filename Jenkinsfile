@@ -1,5 +1,6 @@
 pipeline {
-  agent any
+
+  agent { label 'pixname-node' }
 
   options {
     timestamps()
