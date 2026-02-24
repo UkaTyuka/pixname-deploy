@@ -65,7 +65,7 @@ EOF
             rm -f .terraform.lock.hcl
             # Provider openstack/openstack must be available locally (you installed v1.54.1 into ~/.terraform.d/plugins)
             terraform init -input=false
-            openstack server delete pixname-vm || true
+            #openstack server delete pixname-vm || true
             terraform apply -auto-approve -input=false
 
             terraform output -raw public_ip > public_ip.txt
