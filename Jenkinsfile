@@ -1,141 +1,148 @@
 pipeline {
+    agent { label 'pav1' }
 
-  // IMPORTANT: run on your SSH agent node (the OpenStack “instrumental” server)
-  agent { label 'pixname-node' }
-
-  options {
-    timestamps()
-    disableConcurrentBuilds()
-  }
-
-  parameters {
-    string(name: 'REPO_URL',    defaultValue: 'https://github.com/UkaTyuka/pixname-deploy.git', description: 'Repo to deploy on created VM')
-    string(name: 'REPO_BRANCH', defaultValue: 'main', description: 'Branch to deploy')
-  }
-
-  environment {
-    TF_DIR  = 'Infrastructure/terraform'
-    ANS_DIR = 'ansible'
-    ANSIBLE_HOST_KEY_CHECKING = 'False'
-  }
-
-  stages {
-
-    stage('Checkout') {
-      steps {
-        checkout scm
-      }
+    environment {
+        PYTHONNOUSERSITE          = "1"
+        SSH_KEY_PATH              = "/home/ubuntu/.ssh/id_rsa"
+        ANSIBLE_HOST_KEY_CHECKING = "False"
     }
 
-    stage('Terraform init & apply (OpenStack)') {
-      steps {
-        dir("${env.TF_DIR}") {
-          sh '''
-            set -eux
+    stages {
 
-            # Jenkins SSH agent runs non-login shell; set PATH explicitly
-            export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
 
-            # OpenStack creds (must be non-interactive: OS_PASSWORD exported directly)
-            test -f /home/ubuntu/openrc-jenkins.sh
-            . /home/ubuntu/openrc-jenkins.sh
+        stage('Build & Smoke test (local)') {
+            steps {
+                sh '''
+                    set -e
+					echo "==> Create external Docker volumes (if not exist)"
+					
+					docker volume create pixname_pgdata || true
+					docker volume create pixname_grafana-storage || true
+					docker volume create infrastructure_redis_data || true
 
-            # Ensure we do NOT use any global/root terraformrc from the system
-            export TF_CLI_CONFIG_FILE=/dev/null
-            export HOME=/home/ubuntu
+                    echo "==> Local docker-compose build & smoke test"
 
-            echo "Agent: $(hostname), user: $(whoami)"
-            echo "OS_AUTH_URL=$OS_AUTH_URL"
-            terraform -version
+                    cd Infrastructure
+                    docker-compose down -v || true
+                    docker-compose up -d --build
 
-            # Clean init cache/locks to avoid provider/source mismatches
-            rm -rf .terraform
-            rm -f .terraform.lock.hcl
+                    echo "==> Waiting for ML service"
+                    sleep 20
 
-            # Generate tfvars (EDIT values to match your OpenStack environment)
-            cat > terraform.tfvars <<EOF
-image_name   = "ununtu-22.04"
-flavor_name  = "m1.medium"
-network_name = "sutdents-net"
-keypair_name = "Pichugin"
-region       = "RegionOne"
+                    echo "==> Curl /api/health"
+                    curl -f http://localhost:8000/api/health
+                '''
+            }
+        }
+
+        stage('Terraform: provision infra') {
+            steps {
+                dir('openstack') {
+                    sh '''
+                        set -e
+                        echo "==> Source OpenStack creds"
+                        . /home/ubuntu/openrc-jenkins.sh
+
+                        echo "==> Ensure keypair does not exist"
+                        openstack keypair delete img_description || true
+
+                        echo "==> Generate terraform.tfvars"
+                        cat > terraform.tfvars <<EOF
+auth_url      = "${OS_AUTH_URL}"
+tenant_name   = "${OS_PROJECT_NAME}"
+user_name     = "${OS_USERNAME}"
+password      = "${OS_PASSWORD}"
+region        = "${OS_REGION_NAME:-RegionOne}"
+
+image_name    = "ununtu-22.04"
+flavor_name   = "m1.medium"
+network_name  = "sutdents-net"
+
+public_ssh_key = "$(cat /home/ubuntu/.ssh/id_rsa.pub)"
 EOF
 
-            rm -rf .terraform
-            rm -f .terraform.lock.hcl
-            # Provider openstack/openstack must be available locally (you installed v1.54.1 into ~/.terraform.d/plugins)
-            terraform init -input=false
-            #openstack server delete pixname-vm || true
-            terraform apply -auto-approve -input=false -replace=openstack_compute_instance_v2.vm
+                        echo "==> Terraform init"
+                        terraform init -input=false
 
-            terraform output -raw public_ip > public_ip.txt
-            echo "VM IP: $(cat public_ip.txt)"
-          '''
+                        echo "==> Terraform apply"
+                        terraform apply -auto-approve -input=false
+                    '''
+                }
+            }
         }
-      }
-    }
 
-    stage('Wait for SSH') {
-      steps {
-        withCredentials([sshUserPrivateKey(
-          credentialsId: 'cd6d1437-5465-407f-b168-92787bc852d5',
-          keyFileVariable: 'SSH_KEY_FILE',
-          usernameVariable: 'SSH_USER'
-        )]) {
-          sh '''
-            set -eux
-            export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        stage('Wait for VM SSH') {
+            steps {
+                script {
+                    def vmIp = sh(
+                        script: "cd openstack && terraform output -raw Petroshenko-terraform_ip",
+                        returnStdout: true
+                    ).trim()
 
-            IP="$(cat "$TF_DIR/public_ip.txt")"
+                    echo "Waiting for SSH on ${vmIp}"
 
-            for i in $(seq 1 60); do
-              if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i "$SSH_KEY_FILE" "$SSH_USER@$IP" "echo ok" >/dev/null 2>&1; then
-                echo "SSH is up on $IP"
-                exit 0
-              fi
-              echo "Waiting for SSH... $i/60"
-              sleep 5
-            done
-
-            echo "ERROR: SSH did not become available on $IP"
-            exit 1
-          '''
+                    sh """
+                        set -e
+                        for i in \$(seq 1 30); do
+                            echo "==> Checking SSH (${vmIp}) attempt \$i"
+                            if nc -z -w 5 ${vmIp} 22; then
+                                echo "==> SSH is UP!"
+                                exit 0
+                            fi
+                            echo "==> SSH not ready, sleep 10s"
+                            sleep 10
+                        done
+                        echo "ERROR: SSH did not start in time"
+                        exit 1
+                    """
+                }
+            }
         }
-      }
-    }
 
-    stage('Deploy via Ansible') {
-      steps {
-        withCredentials([sshUserPrivateKey(
-          credentialsId: 'cd6d1437-5465-407f-b168-92787bc852d5',
-          keyFileVariable: 'SSH_KEY_FILE',
-          usernameVariable: 'SSH_USER'
-        )]) {
-          sh '''
-            set -eux
-            export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        stage('Ansible: deploy to img_description VM') {
+            steps {
+                script {
+                    def vmIp = sh(
+                        script: "cd openstack && terraform output -raw Petroshenko-terraform_ip",
+                        returnStdout: true
+                    ).trim()
 
-            IP="$(cat "$TF_DIR/public_ip.txt")"
+                    echo "VM IP from Terraform: ${vmIp}"
 
-            cat > "$ANS_DIR/inventory.ini" <<EOF
-[all]
-$IP ansible_user=$SSH_USER ansible_ssh_private_key_file=$SSH_KEY_FILE ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+                    sh """
+                        set -e
+
+                        # Clean old host key for this IP
+                        mkdir -p ~/.ssh
+                        ssh-keygen -R ${vmIp} || true
+
+                        cd ansible
+
+                        echo "==> Generate inventory.ini"
+                        cat > inventory.ini <<EOF
+[img_description]
+${vmIp} ansible_user=ubuntu ansible_ssh_private_key_file=${SSH_KEY_PATH}
 EOF
 
-            ansible-playbook -i "$ANS_DIR/inventory.ini" "$ANS_DIR/playbook.yml" \
-              -e "repo_url=${REPO_URL}" \
-              -e "repo_branch=${REPO_BRANCH}"
-          '''
+                        echo "==> Run ansible-playbook"
+                        ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory.ini playbook.yml
+                    """
+                }
+            }
         }
-      }
     }
-  }
 
-  post {
-    always {
-      archiveArtifacts artifacts: 'Infrastructure/terraform/public_ip.txt, Infrastructure/terraform/terraform.tfvars, ansible/inventory.ini',
-        onlyIfSuccessful: false,
-        allowEmptyArchive: true
+    post {
+        success {
+            echo "✅ Pipeline SUCCESS: img_description_deploy build → infra → deploy completed."
+        }
+        failure {
+            echo "❌ Pipeline FAILED. Check logs for details."
+        }
     }
-  }
 }
