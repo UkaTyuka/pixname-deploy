@@ -13,13 +13,15 @@
           - git
         update_cache: yes
 
-   - name: Install Docker from Ubuntu repo
-  apt:
-    name:
-      - docker.io
-      - docker-compose
-    state: present
-    update_cache: yes
+
+    - name: Install Docker from Ubuntu repo
+      apt:
+        name:
+          - docker.io
+          - docker-compose
+        state: present
+        update_cache: yes
+
 
     - name: Ensure docker service started
       service:
