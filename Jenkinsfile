@@ -56,7 +56,7 @@ pipeline {
             cat > terraform.tfvars <<EOF
 image_name   = "ununtu-22.04"
 flavor_name  = "m1.small"
-network_name = "private"
+network_name = "sutdents-net"
 keypair_name = "YOUR_KEYPAIR_NAME"
 region       = "RegionOne"
 EOF
