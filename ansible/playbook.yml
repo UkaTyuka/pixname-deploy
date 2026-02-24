@@ -75,11 +75,15 @@
         set -eux
         cd "{{ compose_dir }}"
         docker-compose -p "{{ compose_project }}" down || true
-    
-    - name: Create external docker volume if not exists
+
+
+    - name: Create required external docker volumes
       shell: |
         docker volume inspect pixname_pgdata >/dev/null 2>&1 || \
         docker volume create pixname_pgdata
+
+        docker volume inspect pixname_grafana-storage >/dev/null 2>&1 || \
+        docker volume create pixname_grafana-storage
     
     - name: Compose up
       shell: |
