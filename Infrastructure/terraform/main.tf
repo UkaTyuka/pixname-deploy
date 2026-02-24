@@ -11,7 +11,7 @@ provider "openstack" {}
 
 resource "openstack_compute_instance_v2" "vm" {
   name            = "pixname-vm"
-  image_name      = "Ubuntu 22.04"
+  image_name      = "ununtu-22.04"
   flavor_name     = "m1.small"
   key_pair        = var.keypair_name
   security_groups = ["default"]
