@@ -19,6 +19,21 @@ pipeline {
 
   stages {
 
+    stage('Debug PATH') {
+  steps {
+    sh '''
+      set -eux
+      echo "PATH=$PATH"
+      env | sort
+      ls -l /usr/bin/terraform || true
+      /usr/bin/terraform -version || true
+    '''
+  }
+}
+    
+    
+    
+    
     stage('Checkout') {
       steps {
         checkout scm
