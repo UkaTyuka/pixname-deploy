@@ -55,7 +55,7 @@ pipeline {
             # Generate tfvars (EDIT values to match your OpenStack environment)
             cat > terraform.tfvars <<EOF
 image_name   = "ununtu-22.04"
-flavor_name  = "m1.small"
+flavor_name  = "m1.medium"
 network_name = "sutdents-net"
 keypair_name = "Pichugin"
 region       = "RegionOne"
