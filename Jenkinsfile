@@ -41,35 +41,35 @@ pipeline {
       }
     }
 
-    stage('Terraform init & apply') {
-      steps {
-        withCredentials([sshUserPrivateKey(
-          credentialsId: 'cd6d1437-5465-407f-b168-92787bc852d5',
-          keyFileVariable: 'SSH_KEY_FILE',
-          usernameVariable: 'SSH_USER'
-        )]) {
-          dir("${env.TF_DIR}") {
-            sh '''
-              set -eux
+   stage('Terraform init & apply') {
+  steps {
+    withCredentials([sshUserPrivateKey(
+      credentialsId: 'cd6d1437-5465-407f-b168-92787bc852d5',
+      keyFileVariable: 'SSH_KEY_FILE',
+      usernameVariable: 'SSH_USER'
+    )]) {
+      dir("${env.TF_DIR}") {
+        sh '''
+          set -eux
 
-              # Явно задаём PATH (для SSH-агента)
-              export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          export HOME=/home/ubuntu
+          export TF_PLUGIN_CACHE_DIR="$HOME/.terraform.d/plugin-cache"
 
-              echo "PATH=$PATH"
-              which terraform
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
 
-              terraform -version
-              terraform init -input=false
+          terraform -version
+          terraform init -input=false
 
-              TF_VAR_ssh_public_key="$(ssh-keygen -y -f "$SSH_KEY_FILE")" \
-              terraform apply -auto-approve -input=false
+          TF_VAR_ssh_public_key="$(ssh-keygen -y -f "$SSH_KEY_FILE")" \
+          terraform apply -auto-approve -input=false
 
-              terraform output -raw public_ip > public_ip.txt
-            '''
-          }
-        }
+          terraform output -raw public_ip > public_ip.txt
+        '''
       }
     }
+  }
+}
 
     stage('Wait for SSH') {
       steps {
