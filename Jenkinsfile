@@ -24,7 +24,7 @@ pipeline {
     ANS_DIR = 'ansible'
 
     // Full path is important for Jenkins environment
-    TERRAFORM_BIN = '/usr/local/bin/terraform'
+    TERRAFORM_BIN = '/usr/bin/terraform'
 
     // Non-interactive Ansible
     ANSIBLE_HOST_KEY_CHECKING = 'False'
