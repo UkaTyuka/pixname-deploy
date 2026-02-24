@@ -54,9 +54,7 @@ pipeline {
 
           export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
           export HOME=/home/ubuntu
-          export TF_PLUGIN_CACHE_DIR="$HOME/.terraform.d/plugin-cache"
-
-          mkdir -p "$TF_PLUGIN_CACHE_DIR"
+          export TF_CLI_CONFIG_FILE=/dev/null
 
           terraform -version
           terraform init -input=false
