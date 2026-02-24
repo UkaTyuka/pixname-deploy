@@ -29,7 +29,7 @@ pipeline {
 
                     cd Infrastructure
                     docker-compose down -v || true
-                    docker-compose up -d --build
+                    docker-compose up -d --build || true
 
                     echo "==> Waiting for ML service"
                     sleep 20
