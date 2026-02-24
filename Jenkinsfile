@@ -61,6 +61,8 @@ keypair_name = "YOUR_KEYPAIR_NAME"
 region       = "RegionOne"
 EOF
 
+            rm -rf .terraform
+            rm -f .terraform.lock.hcl
             # Provider openstack/openstack must be available locally (you installed v1.54.1 into ~/.terraform.d/plugins)
             terraform init -input=false
             terraform apply -auto-approve -input=false
