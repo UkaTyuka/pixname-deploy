@@ -78,7 +78,7 @@ pipeline {
     stage('Ansible deploy') {
       steps {
         withCredentials([sshUserPrivateKey(
-          credentialsId: 'vm-ssh-key',
+          credentialsId: 'cd6d1437-5465-407f-b168-92787bc852d5',
           keyFileVariable: 'SSH_KEY_FILE',
           usernameVariable: 'SSH_USER'
         )]) {
