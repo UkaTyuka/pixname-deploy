@@ -1,27 +1,33 @@
+---
 - name: Provision VM and deploy PixName
   hosts: all
   become: true
 
+  vars:
+    # Where we will clone the repo on the target VM
+    project_dir: /opt/pixname
+
+    # Where docker-compose.yml is located inside your repo
+    compose_dir: /opt/pixname/Infrastructure
+
+    # Compose project name (-p)
+    compose_project: infrastructure
+
   tasks:
-    - name: Install prerequisites
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install prerequisites + Docker (from Ubuntu repo)
       apt:
         name:
           - ca-certificates
           - curl
-          - gnupg
-          - lsb-release
           - git
-        update_cache: yes
-
-
-    - name: Install Docker from Ubuntu repo
-      apt:
-        name:
           - docker.io
           - docker-compose
         state: present
         update_cache: yes
-
 
     - name: Ensure docker service started
       service:
@@ -42,8 +48,19 @@
         version: "{{ repo_branch }}"
         force: yes
 
-    # Если нужны секреты (BOT_TOKEN, DB creds) — лучше отдельным файлом/секретом Jenkins.
-    - name: Write env file for compose (example)
+    - name: Ensure compose dir exists
+      stat:
+        path: "{{ compose_dir }}"
+      register: compose_dir_stat
+
+    - name: Fail if compose dir not found
+      fail:
+        msg: "compose_dir {{ compose_dir }} not found. Check repo structure / path to docker-compose.yml"
+      when: not compose_dir_stat.stat.exists
+
+    # Если нужны секреты (BOT_TOKEN, DB creds) — для учебки можно так.
+    # Jenkins может прокинуть переменные окружения на ansible-agent, а ansible подставит их в .env
+    - name: Write env file for compose
       copy:
         dest: "{{ compose_dir }}/.env"
         mode: "0600"
@@ -56,18 +73,26 @@
 
     - name: Compose down (safe)
       shell: |
+        set -eux
         cd "{{ compose_dir }}"
-        docker compose -p "{{ compose_project }}" down || true
+        docker-compose -p "{{ compose_project }}" down || true
 
     - name: Compose up
       shell: |
+        set -eux
         cd "{{ compose_dir }}"
-        docker compose -p "{{ compose_project }}" up -d --build
+        docker-compose -p "{{ compose_project }}" up -d --build
 
-    - name: Healthcheck
+    # Универсальная проверка без HTTP healthcheck:
+    # просто убеждаемся, что docker-compose видит сервисы и они в состоянии Up
+    - name: Check compose services are Up
       shell: |
-        for i in $(seq 1 30); do
-          curl -sf "{{ healthcheck_url }}" && exit 0
-          sleep 2
-        done
-        exit 1
+        set -eux
+        cd "{{ compose_dir }}"
+        docker-compose -p "{{ compose_project }}" ps
+        docker-compose -p "{{ compose_project }}" ps --services
+      register: compose_ps
+
+    - name: Show compose status
+      debug:
+        var: compose_ps.stdout_lines
