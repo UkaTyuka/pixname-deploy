@@ -1,5 +1,5 @@
 pipeline {
-    agent { label 'pav1' }
+    agent { label 'pixname-node' }
 
     environment {
         PYTHONNOUSERSITE          = "1"
@@ -80,7 +80,7 @@ EOF
             steps {
                 script {
                     def vmIp = sh(
-                        script: "cd openstack && terraform output -raw Petroshenko-terraform_ip",
+                        script: "cd openstack && terraform output -raw Pixname-terraform_ip",
                         returnStdout: true
                     ).trim()
 
@@ -108,7 +108,7 @@ EOF
             steps {
                 script {
                     def vmIp = sh(
-                        script: "cd openstack && terraform output -raw Petroshenko-terraform_ip",
+                        script: "cd openstack && terraform output -raw Pixname-terraform_ip",
                         returnStdout: true
                     ).trim()
 
