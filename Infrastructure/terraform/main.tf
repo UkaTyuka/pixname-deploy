@@ -93,7 +93,7 @@ resource "yandex_compute_instance" "vm" {
 
   metadata = {
     # ВАЖНО: сюда положи публичный ключ, который соответствует `vm-ssh-key` в Jenkins
-    ssh-keys = "ubuntu:${file("id_rsa.pub")}"
+    ssh-keys = "ubuntu:${ssh_public_key}"
   }
 }
 
