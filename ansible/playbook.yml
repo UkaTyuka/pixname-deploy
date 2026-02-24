@@ -1,106 +1,121 @@
----
-- name: Provision VM and deploy PixName
-  hosts: all
-  become: true
-
+- hosts: img_description
+  become: yes
   vars:
-    # Where we will clone the repo on the target VM
-    project_dir: /opt/pixname
-
-    # Where docker-compose.yml is located inside your repo
-    compose_dir: /opt/pixname/Infrastructure
-
-    # Compose project name (-p)
-    compose_project: infrastructure
+    app_dir: /opt/img-description
 
   tasks:
     - name: Update apt cache
       apt:
         update_cache: yes
+        cache_valid_time: 3600
 
-    - name: Install prerequisites + Docker (from Ubuntu repo)
+    - name: Install Docker and dependencies
       apt:
         name:
-          - ca-certificates
-          - curl
-          - git
           - docker.io
           - docker-compose
+          - python3-pip
         state: present
-        update_cache: yes
 
-    - name: Ensure docker service started
+    - name: Ensure docker is running
       service:
         name: docker
         state: started
         enabled: yes
 
-    - name: Create project dir
+    - name: Add user to docker group (to run docker without sudo)
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+
+    - name: Create app directory
       file:
-        path: "{{ project_dir }}"
+        path: "{{ app_dir }}"
         state: directory
-        mode: "0755"
+        mode: '0755'
 
-    - name: Checkout repo
-      git:
-        repo: "{{ repo_url }}"
-        dest: "{{ project_dir }}"
-        version: "{{ repo_branch }}"
-        force: yes
-
-    - name: Ensure compose dir exists
-      stat:
-        path: "{{ compose_dir }}"
-      register: compose_dir_stat
-
-    - name: Fail if compose dir not found
-      fail:
-        msg: "compose_dir {{ compose_dir }} not found. Check repo structure / path to docker-compose.yml"
-      when: not compose_dir_stat.stat.exists
-
-    
-    - name: Write env file for compose
+    - name: Copy Infrastructure folder
       copy:
-        dest: "{{ compose_dir }}/.env"
-        mode: "0600"
-        content: |
-          BOT_TOKEN={{ lookup('env','BOT_TOKEN') | default('', true) }}
-          DB_USER={{ lookup('env','DB_USER') | default('pixname', true) }}
-          DB_PASSWORD={{ lookup('env','DB_PASSWORD') | default('pixnamepass', true) }}
-          DB_NAME={{ lookup('env','DB_NAME') | default('pixname', true) }}
-          DB_HOST={{ lookup('env','DB_HOST') | default('db', true) }}
+        src: ../Infrastructure/
+        dest: "{{ app_dir }}/Infrastructure/"
 
-    - name: Compose down (safe)
+    - name: Copy ml-core-service folder
+      copy:
+        src: ../ml-core-service/
+        dest: "{{ app_dir }}/ml-core-service/"
+
+    - name: Copy tg-bot folder
+      copy:
+        src: ../tg-bot/
+        dest: "{{ app_dir }}/tg-bot/"
+
+    - name: Copy .env file (if exists)
+      copy:
+        src: ../Infrastructure/tg-bot.env
+        dest: "{{ app_dir }}/Infrastructure/tg-bot.env"
+        mode: '0644'  
+        owner: "{{ ansible_user }}"  
+      ignore_errors: yes  
+
+    - name: Stop and remove old containers (if any)
       shell: |
-        set -eux
-        cd "{{ compose_dir }}"
-        docker-compose -p "{{ compose_project }}" down || true
+        cd {{ app_dir }}/Infrastructure
+        docker-compose down -v || true
+      args:
+        chdir: "{{ app_dir }}/Infrastructure"
+      ignore_errors: yes
 
+    - name: Create external Docker volumes
+      command: docker volume create {{ item }}
+      with_items:
+        - pixname_pgdata
+        - pixname_grafana-storage
+        - infrastructure_redis_data
+      ignore_errors: yes
 
-    - name: Create required external docker volumes
+    - name: Start PostgreSQL and Redis only (for migrations)
       shell: |
-        docker volume inspect pixname_pgdata >/dev/null 2>&1 || \
-        docker volume create pixname_pgdata
+        docker-compose up -d db redis
+      args:
+        chdir: "{{ app_dir }}/Infrastructure"
+      ignore_errors: yes
 
-        docker volume inspect pixname_grafana-storage >/dev/null 2>&1 || \
-        docker volume create pixname_grafana-storage
-    
-    - name: Compose up
+    - name: Wait for PostgreSQL to be ready
       shell: |
-        set -eux
-        cd "{{ compose_dir }}"
-        docker-compose -p "{{ compose_project }}" up -d --build
+        until docker-compose exec -T db pg_isready -U pixname -d pixname; do
+          echo "Waiting for PostgreSQL..."
+          sleep 2
+        done
+      args:
+        chdir: "{{ app_dir }}/Infrastructure"
+      retries: 10
+      delay: 3
+      ignore_errors: yes
 
-    # Универсальная проверка без HTTP healthcheck:
-    # просто убеждаемся, что docker-compose видит сервисы и они в состоянии Up
-    - name: Check compose services are Up
+    - name: Run Alembic migrations
       shell: |
-        set -eux
-        cd "{{ compose_dir }}"
-        docker-compose -p "{{ compose_project }}" ps
-        docker-compose -p "{{ compose_project }}" ps --services
-      register: compose_ps
+        docker-compose run --rm --entrypoint python telegram_bot -m alembic upgrade head
+      args:
+        chdir: "{{ app_dir }}/Infrastructure"
+      ignore_errors: yes
+      timeout: 900
 
-    - name: Show compose status
+    - name: Build and start application stack
+      shell: |
+        cd {{ app_dir }}/Infrastructure
+        docker-compose up -d --build
+      args:
+        chdir: "{{ app_dir }}/Infrastructure"
+
+    - name: Wait for services to start
+      wait_for:
+        timeout: 30
+      delegate_to: localhost
+
+    - name: Show completion message
       debug:
-        var: compose_ps.stdout_lines
+        msg: |
+          ✅ Deployment complete!
+          📁 App dir: {{ app_dir }}
+          🔍 Check logs: cd {{ app_dir }}/Infrastructure && docker-compose logs -f
