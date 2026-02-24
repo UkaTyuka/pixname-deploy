@@ -1,11 +1,3 @@
-// Jenkinsfile (fixed, full)
-// - No AnsiColor option (plugin may be absent)
-// - Uses your Jenkins Credentials ID for SSH key
-// - Uses Terraform from /usr/bin/terraform (PATH/sandbox-safe)
-// - Removes fragile `test -x` and adds diagnostics (whoami/hostname/ls -l)
-// - Generates Ansible inventory and runs ansible/playbook.yml
-// - Passes repo_url/repo_branch to Ansible
-
 pipeline {
   agent any
 
@@ -22,15 +14,25 @@ pipeline {
   environment {
     TF_DIR  = 'Infrastructure/terraform'
     ANS_DIR = 'ansible'
-
-    // Use a stable location
-    TERRAFORM_BIN = '/usr/bin/terraform'
-
-    // Non-interactive Ansible
     ANSIBLE_HOST_KEY_CHECKING = 'False'
   }
 
   stages {
+
+    stage('Diagnostics (agent)') {
+      steps {
+        sh '''
+          set -eux
+          echo "WHOAMI=$(whoami)"
+          echo "HOSTNAME=$(hostname)"
+          echo "PWD=$(pwd)"
+          echo "PATH=$PATH"
+          which terraform || true
+          which docker || true
+          docker version || true
+        '''
+      }
+    }
 
     stage('Checkout') {
       steps {
@@ -39,15 +41,22 @@ pipeline {
           set -eux
           echo "Workspace: $PWD"
           ls -la
-          echo "Terraform dir:"
-          ls -la "$TF_DIR" || true
-          echo "Ansible dir:"
-          ls -la "$ANS_DIR" || true
+          ls -la "$TF_DIR"
+          ls -la "$ANS_DIR"
         '''
       }
     }
 
-    stage('Terraform apply') {
+    stage('Terraform apply (Docker)') {
+      // Terraform runs inside container, so it does NOT need to be installed on the agent host
+      agent {
+        docker {
+          image 'hashicorp/terraform:1.6.6'
+          // run as root to avoid permission problems writing .terraform/ and state in workspace
+          args '-u root:root'
+          reuseNode true
+        }
+      }
       steps {
         withCredentials([sshUserPrivateKey(
           credentialsId: 'cd6d1437-5465-407f-b168-92787bc852d5',
@@ -58,23 +67,18 @@ pipeline {
             sh '''
               set -eux
 
-              echo "=== Diagnostics ==="
-              echo "WHOAMI: $(whoami)"
-              echo "HOSTNAME: $(hostname)"
-              echo "PWD: $(pwd)"
-              ls -l "$TERRAFORM_BIN" || true
-              echo "==================="
+              echo "=== Terraform container diagnostics ==="
+              whoami
+              hostname
+              terraform -version
+              echo "======================================"
 
-              "$TERRAFORM_BIN" -version
+              terraform init -input=false
 
-              "$TERRAFORM_BIN" init -input=false
-
-              # Pass ssh public key to Terraform (main.tf should use var.ssh_public_key)
               TF_VAR_ssh_public_key="$(ssh-keygen -y -f "$SSH_KEY_FILE")" \
-              "$TERRAFORM_BIN" apply -auto-approve -input=false
+              terraform apply -auto-approve -input=false
 
-              # Save VM public IP for next stages
-              "$TERRAFORM_BIN" output -raw public_ip > public_ip.txt
+              terraform output -raw public_ip > public_ip.txt
               echo "VM public IP: $(cat public_ip.txt)"
             '''
           }
@@ -142,7 +146,6 @@ EOF
         )]) {
           sh '''
             set -eux
-
             ansible-playbook -i "$ANS_DIR/inventory.ini" "$ANS_DIR/playbook.yml" \
               -e "repo_url=${REPO_URL}" \
               -e "repo_branch=${REPO_BRANCH}"
