@@ -12,7 +12,7 @@ provider "openstack" {}
 resource "openstack_compute_instance_v2" "vm" {
   name            = "pixname-vm"
   image_name      = "ununtu-22.04"
-  flavor_name     = "m1.small"
+  flavor_name     = "m1.medium"
   key_pair        = var.keypair_name
   security_groups = ["default"]
 
