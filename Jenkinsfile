@@ -1,5 +1,6 @@
 pipeline {
 
+  // IMPORTANT: run on your SSH agent node (the OpenStack “instrumental” server)
   agent { label 'pixname-node' }
 
   options {
@@ -8,8 +9,8 @@ pipeline {
   }
 
   parameters {
-    string(name: 'REPO_URL',    defaultValue: 'https://github.com/UkaTyuka/pixname-deploy.git')
-    string(name: 'REPO_BRANCH', defaultValue: 'main')
+    string(name: 'REPO_URL',    defaultValue: 'https://github.com/UkaTyuka/pixname-deploy.git', description: 'Repo to deploy on created VM')
+    string(name: 'REPO_BRANCH', defaultValue: 'main', description: 'Branch to deploy')
   }
 
   environment {
@@ -26,21 +27,33 @@ pipeline {
       }
     }
 
-   stage('Terraform init & apply (OpenStack)') {
-  steps {
-    dir("${env.TF_DIR}") {
-      sh '''
-        set -eux
-        export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    stage('Terraform init & apply (OpenStack)') {
+      steps {
+        dir("${env.TF_DIR}") {
+          sh '''
+            set -eux
 
-        # Отключаем глобальный terraformrc (важно!)
-        export TF_CLI_CONFIG_FILE=/dev/null
+            # Jenkins SSH agent runs non-login shell; set PATH explicitly
+            export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-        # Подгружаем openstack креды
-        . /home/ubuntu/openrc-jenkins.sh
+            # OpenStack creds (must be non-interactive: OS_PASSWORD exported directly)
+            test -f /home/ubuntu/openrc-jenkins.sh
+            . /home/ubuntu/openrc-jenkins.sh
 
-        # Генерируем tfvars
-        cat > terraform.tfvars <<EOF
+            # Ensure we do NOT use any global/root terraformrc from the system
+            export TF_CLI_CONFIG_FILE=/dev/null
+            export HOME=/home/ubuntu
+
+            echo "Agent: $(hostname), user: $(whoami)"
+            echo "OS_AUTH_URL=$OS_AUTH_URL"
+            terraform -version
+
+            # Clean init cache/locks to avoid provider/source mismatches
+            rm -rf .terraform
+            rm -f .terraform.lock.hcl
+
+            # Generate tfvars (EDIT values to match your OpenStack environment)
+            cat > terraform.tfvars <<EOF
 image_name   = "Ubuntu 22.04"
 flavor_name  = "m1.small"
 network_name = "private"
@@ -48,27 +61,16 @@ keypair_name = "YOUR_KEYPAIR_NAME"
 region       = "RegionOne"
 EOF
 
-        cat > terraform.rc <<EOF
-provider_installation {
-  network_mirror {
-    url = "https://terraform-mirror.yandexcloud.net/"
-  }
-  direct {
-    exclude = ["registry.terraform.io/*/*"]
-  }
-}
-EOF
+            # Provider openstack/openstack must be available locally (you installed v1.54.1 into ~/.terraform.d/plugins)
+            terraform init -input=false
+            terraform apply -auto-approve -input=false
 
-export TF_CLI_CONFIG_FILE="$(pwd)/terraform.rc"
-
-        terraform init -input=false
-        terraform apply -auto-approve -input=false
-
-        terraform output -raw public_ip > public_ip.txt
-      '''
+            terraform output -raw public_ip > public_ip.txt
+            echo "VM IP: $(cat public_ip.txt)"
+          '''
+        }
+      }
     }
-  }
-}
 
     stage('Wait for SSH') {
       steps {
@@ -84,7 +86,7 @@ export TF_CLI_CONFIG_FILE="$(pwd)/terraform.rc"
             IP="$(cat "$TF_DIR/public_ip.txt")"
 
             for i in $(seq 1 60); do
-              if ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_FILE" "$SSH_USER@$IP" "echo ok" >/dev/null 2>&1; then
+              if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i "$SSH_KEY_FILE" "$SSH_USER@$IP" "echo ok" >/dev/null 2>&1; then
                 echo "SSH is up on $IP"
                 exit 0
               fi
