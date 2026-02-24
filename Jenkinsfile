@@ -1,10 +1,10 @@
-// Jenkinsfile (fixed)
-// Key points:
-// - Works without AnsiColor plugin
-// - Uses Jenkins Credentials (SSH key) instead of ~/.ssh
-// - Uses full path to terraform (/usr/local/bin/terraform) because Jenkins PATH may not include /usr/local/bin
+// Jenkinsfile (fixed, full)
+// - No AnsiColor option (plugin may be absent)
+// - Uses your Jenkins Credentials ID for SSH key
+// - Uses Terraform from /usr/bin/terraform (PATH/sandbox-safe)
+// - Removes fragile `test -x` and adds diagnostics (whoami/hostname/ls -l)
 // - Generates Ansible inventory and runs ansible/playbook.yml
-// - Passes repo_url/repo_branch to Ansible (no secrets hardcoded)
+// - Passes repo_url/repo_branch to Ansible
 
 pipeline {
   agent any
@@ -23,7 +23,7 @@ pipeline {
     TF_DIR  = 'Infrastructure/terraform'
     ANS_DIR = 'ansible'
 
-    // Full path is important for Jenkins environment
+    // Use a stable location
     TERRAFORM_BIN = '/usr/bin/terraform'
 
     // Non-interactive Ansible
@@ -50,7 +50,7 @@ pipeline {
     stage('Terraform apply') {
       steps {
         withCredentials([sshUserPrivateKey(
-          credentialsId: 'cd6d1437-5465-407f-b168-92787bc852d5',          // <-- make sure this ID exists in Jenkins Credentials
+          credentialsId: 'cd6d1437-5465-407f-b168-92787bc852d5',
           keyFileVariable: 'SSH_KEY_FILE',
           usernameVariable: 'SSH_USER'
         )]) {
@@ -58,18 +58,22 @@ pipeline {
             sh '''
               set -eux
 
-              # Sanity check terraform binary
-              test -x "$TERRAFORM_BIN"
+              echo "=== Diagnostics ==="
+              echo "WHOAMI: $(whoami)"
+              echo "HOSTNAME: $(hostname)"
+              echo "PWD: $(pwd)"
+              ls -l "$TERRAFORM_BIN" || true
+              echo "==================="
+
               "$TERRAFORM_BIN" -version
 
               "$TERRAFORM_BIN" init -input=false
 
-              # If your main.tf uses var.ssh_public_key, we pass it here.
-              # (ssh-keygen -y derives public key from the private key securely)
+              # Pass ssh public key to Terraform (main.tf should use var.ssh_public_key)
               TF_VAR_ssh_public_key="$(ssh-keygen -y -f "$SSH_KEY_FILE")" \
               "$TERRAFORM_BIN" apply -auto-approve -input=false
 
-              # Save VM public IP for the next stages
+              # Save VM public IP for next stages
               "$TERRAFORM_BIN" output -raw public_ip > public_ip.txt
               echo "VM public IP: $(cat public_ip.txt)"
             '''
@@ -139,7 +143,6 @@ EOF
           sh '''
             set -eux
 
-            # Run deploy
             ansible-playbook -i "$ANS_DIR/inventory.ini" "$ANS_DIR/playbook.yml" \
               -e "repo_url=${REPO_URL}" \
               -e "repo_branch=${REPO_BRANCH}"
