@@ -66,7 +66,7 @@ EOF
             # Provider openstack/openstack must be available locally (you installed v1.54.1 into ~/.terraform.d/plugins)
             terraform init -input=false
             #openstack server delete pixname-vm || true
-            terraform apply -auto-approve -input=false
+            terraform apply -auto-approve -input=false -replace=openstack_compute_instance_v2.vm
 
             terraform output -raw public_ip > public_ip.txt
             echo "VM IP: $(cat public_ip.txt)"
