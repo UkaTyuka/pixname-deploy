@@ -55,7 +55,6 @@ pipeline {
           export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
           export HOME=/home/ubuntu
 
-          # Создаём CLI config с зеркалом Terraform Registry
           cat > terraform.rc <<EOF
 provider_installation {
   network_mirror {
@@ -69,11 +68,13 @@ EOF
 
           export TF_CLI_CONFIG_FILE="$(pwd)/terraform.rc"
 
-          terraform -version
           terraform init -input=false
 
           TF_VAR_ssh_public_key="$(ssh-keygen -y -f "$SSH_KEY_FILE")" \
-          terraform apply -auto-approve -input=false
+          terraform apply -auto-approve -input=false \
+            -var="cloud_id=YOUR_CLOUD_ID" \
+            -var="folder_id=YOUR_FOLDER_ID" \
+            -var="sa_key_file=$(pwd)/sa-key.json"
 
           terraform output -raw public_ip > public_ip.txt
         '''
