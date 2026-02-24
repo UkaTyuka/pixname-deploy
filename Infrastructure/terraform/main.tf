@@ -17,7 +17,7 @@ resource "openstack_compute_instance_v2" "vm" {
   security_groups = ["default"]
 
   network {
-    name = "private"
+    name = "sutdents-net"
   }
 }
 
