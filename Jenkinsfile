@@ -26,19 +26,21 @@ pipeline {
       }
     }
 
-    stage('Terraform init & apply (OpenStack)') {
-      steps {
-        dir("${env.TF_DIR}") {
-          sh '''
-            set -eux
-            export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+   stage('Terraform init & apply (OpenStack)') {
+  steps {
+    dir("${env.TF_DIR}") {
+      sh '''
+        set -eux
+        export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-            # 1) Подгружаем OpenStack credentials (openrc)
-            test -f /home/ubuntu/openrc-jenkins.sh
-            . /home/ubuntu/openrc-jenkins.sh
+        # Отключаем глобальный terraformrc (важно!)
+        export TF_CLI_CONFIG_FILE=/dev/null
 
-            # 2) Генерируем terraform.tfvars (тут подставь свои реальные значения)
-            cat > terraform.tfvars <<EOF
+        # Подгружаем openstack креды
+        . /home/ubuntu/openrc-jenkins.sh
+
+        # Генерируем tfvars
+        cat > terraform.tfvars <<EOF
 image_name   = "Ubuntu 22.04"
 flavor_name  = "m1.small"
 network_name = "private"
@@ -46,15 +48,14 @@ keypair_name = "YOUR_KEYPAIR_NAME"
 region       = "RegionOne"
 EOF
 
-            terraform init -input=false
-            terraform apply -auto-approve -input=false
+        terraform init -input=false
+        terraform apply -auto-approve -input=false
 
-            terraform output -raw public_ip > public_ip.txt
-            echo "VM IP: $(cat public_ip.txt)"
-          '''
-        }
-      }
+        terraform output -raw public_ip > public_ip.txt
+      '''
     }
+  }
+}
 
     stage('Wait for SSH') {
       steps {
