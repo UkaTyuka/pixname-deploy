@@ -54,7 +54,20 @@ pipeline {
 
           export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
           export HOME=/home/ubuntu
-          export TF_CLI_CONFIG_FILE=/dev/null
+
+          # Создаём CLI config с зеркалом Terraform Registry
+          cat > terraform.rc <<EOF
+provider_installation {
+  network_mirror {
+    url = "https://terraform-mirror.yandexcloud.net/"
+  }
+  direct {
+    exclude = ["registry.terraform.io/*/*"]
+  }
+}
+EOF
+
+          export TF_CLI_CONFIG_FILE="$(pwd)/terraform.rc"
 
           terraform -version
           terraform init -input=false
@@ -68,7 +81,6 @@ pipeline {
     }
   }
 }
-
     stage('Wait for SSH') {
       steps {
         withCredentials([sshUserPrivateKey(
