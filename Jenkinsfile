@@ -57,7 +57,7 @@ pipeline {
 image_name   = "ununtu-22.04"
 flavor_name  = "m1.small"
 network_name = "sutdents-net"
-keypair_name = "YOUR_KEYPAIR_NAME"
+keypair_name = "Pichugn"
 region       = "RegionOne"
 EOF
 
