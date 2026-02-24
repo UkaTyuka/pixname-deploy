@@ -1,5 +1,5 @@
 pipeline {
-    agent { label 'pixname-node' }
+    agent { label 'pav1' }
 
     environment {
         PYTHONNOUSERSITE          = "1"
@@ -28,8 +28,8 @@ pipeline {
                     echo "==> Local docker-compose build & smoke test"
 
                     cd Infrastructure
-                    docker-compose down -v || true
-                    docker-compose up -d --build || true
+                    docker compose down -v || true
+                    docker compose up -d --build
 
                     echo "==> Waiting for ML service"
                     sleep 20
@@ -67,10 +67,6 @@ public_ssh_key = "$(cat /home/ubuntu/.ssh/id_rsa.pub)"
 EOF
 
                         echo "==> Terraform init"
-						export HOME=/home/ubuntu
-						export TF_CLI_CONFIG_FILE=/dev/null
-						export TF_PLUGIN_CACHE_DIR=/home/ubuntu/.terraform.d/plugin-cache
-						mkdir -p "$TF_PLUGIN_CACHE_DIR"
                         terraform init -input=false
 
                         echo "==> Terraform apply"
@@ -84,7 +80,7 @@ EOF
             steps {
                 script {
                     def vmIp = sh(
-                        script: "cd openstack && terraform output -raw pixname-terraform_ip",
+                        script: "cd openstack && terraform output -raw Petroshenko-terraform_ip",
                         returnStdout: true
                     ).trim()
 
