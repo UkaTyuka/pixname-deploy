@@ -48,6 +48,19 @@ keypair_name = "YOUR_KEYPAIR_NAME"
 region       = "RegionOne"
 EOF
 
+        cat > terraform.rc <<EOF
+provider_installation {
+  network_mirror {
+    url = "https://terraform-mirror.yandexcloud.net/"
+  }
+  direct {
+    exclude = ["registry.terraform.io/*/*"]
+  }
+}
+EOF
+
+export TF_CLI_CONFIG_FILE="$(pwd)/terraform.rc"
+
         terraform init -input=false
         terraform apply -auto-approve -input=false
 
