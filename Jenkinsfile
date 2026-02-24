@@ -50,7 +50,7 @@ pipeline {
     stage('Terraform apply') {
       steps {
         withCredentials([sshUserPrivateKey(
-          credentialsId: 'vm-ssh-key',          // <-- make sure this ID exists in Jenkins Credentials
+          credentialsId: 'cd6d1437-5465-407f-b168-92787bc852d5',          // <-- make sure this ID exists in Jenkins Credentials
           keyFileVariable: 'SSH_KEY_FILE',
           usernameVariable: 'SSH_USER'
         )]) {
@@ -81,7 +81,7 @@ pipeline {
     stage('Wait for SSH') {
       steps {
         withCredentials([sshUserPrivateKey(
-          credentialsId: 'vm-ssh-key',
+          credentialsId: 'cd6d1437-5465-407f-b168-92787bc852d5',
           keyFileVariable: 'SSH_KEY_FILE',
           usernameVariable: 'SSH_USER'
         )]) {
@@ -108,7 +108,7 @@ pipeline {
     stage('Generate Ansible inventory') {
       steps {
         withCredentials([sshUserPrivateKey(
-          credentialsId: 'vm-ssh-key',
+          credentialsId: 'cd6d1437-5465-407f-b168-92787bc852d5',
           keyFileVariable: 'SSH_KEY_FILE',
           usernameVariable: 'SSH_USER'
         )]) {
@@ -132,7 +132,7 @@ EOF
     stage('Ansible deploy') {
       steps {
         withCredentials([sshUserPrivateKey(
-          credentialsId: 'vm-ssh-key',
+          credentialsId: 'cd6d1437-5465-407f-b168-92787bc852d5',
           keyFileVariable: 'SSH_KEY_FILE',
           usernameVariable: 'SSH_USER'
         )]) {
