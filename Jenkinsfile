@@ -67,6 +67,10 @@ public_ssh_key = "$(cat /home/ubuntu/.ssh/id_rsa.pub)"
 EOF
 
                         echo "==> Terraform init"
+						export HOME=/home/ubuntu
+						export TF_CLI_CONFIG_FILE=/dev/null
+						export TF_PLUGIN_CACHE_DIR=/home/ubuntu/.terraform.d/plugin-cache
+						mkdir -p "$TF_PLUGIN_CACHE_DIR"
                         terraform init -input=false
 
                         echo "==> Terraform apply"
