@@ -8,7 +8,7 @@ pipeline {
   }
 
   parameters {
-    string(name: 'REPO_URL', defaultValue: 'https://github.com/UkaTyuka/pixname-deploy.git')
+    string(name: 'REPO_URL',    defaultValue: 'https://github.com/UkaTyuka/pixname-deploy.git')
     string(name: 'REPO_BRANCH', defaultValue: 'main')
   }
 
@@ -20,68 +20,42 @@ pipeline {
 
   stages {
 
-    stage('Debug PATH') {
-  steps {
-    sh '''
-      set -eux
-      echo "PATH=$PATH"
-      env | sort
-      ls -l /usr/bin/terraform || true
-      /usr/bin/terraform -version || true
-    '''
-  }
-}
-    
-    
-    
-    
     stage('Checkout') {
       steps {
         checkout scm
       }
     }
 
-   stage('Terraform init & apply') {
-  steps {
-    withCredentials([sshUserPrivateKey(
-      credentialsId: 'cd6d1437-5465-407f-b168-92787bc852d5',
-      keyFileVariable: 'SSH_KEY_FILE',
-      usernameVariable: 'SSH_USER'
-    )]) {
-      dir("${env.TF_DIR}") {
-        sh '''
-          set -eux
+    stage('Terraform init & apply (OpenStack)') {
+      steps {
+        dir("${env.TF_DIR}") {
+          sh '''
+            set -eux
+            export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-          export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-          export HOME=/home/ubuntu
+            # 1) Подгружаем OpenStack credentials (openrc)
+            test -f /home/ubuntu/openrc-jenkins.sh
+            . /home/ubuntu/openrc-jenkins.sh
 
-          cat > terraform.rc <<EOF
-provider_installation {
-  network_mirror {
-    url = "https://terraform-mirror.yandexcloud.net/"
-  }
-  direct {
-    exclude = ["registry.terraform.io/*/*"]
-  }
-}
+            # 2) Генерируем terraform.tfvars (тут подставь свои реальные значения)
+            cat > terraform.tfvars <<EOF
+image_name   = "Ubuntu 22.04"
+flavor_name  = "m1.small"
+network_name = "private"
+keypair_name = "YOUR_KEYPAIR_NAME"
+region       = "RegionOne"
 EOF
 
-          export TF_CLI_CONFIG_FILE="$(pwd)/terraform.rc"
+            terraform init -input=false
+            terraform apply -auto-approve -input=false
 
-          terraform init -input=false
-
-          TF_VAR_ssh_public_key="$(ssh-keygen -y -f "$SSH_KEY_FILE")" \
-          terraform apply -auto-approve -input=false \
-            -var="cloud_id=YOUR_CLOUD_ID" \
-            -var="folder_id=YOUR_FOLDER_ID" \
-            -var="sa_key_file=$(pwd)/sa-key.json"
-
-          terraform output -raw public_ip > public_ip.txt
-        '''
+            terraform output -raw public_ip > public_ip.txt
+            echo "VM IP: $(cat public_ip.txt)"
+          '''
+        }
       }
     }
-  }
-}
+
     stage('Wait for SSH') {
       steps {
         withCredentials([sshUserPrivateKey(
@@ -97,11 +71,14 @@ EOF
 
             for i in $(seq 1 60); do
               if ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_FILE" "$SSH_USER@$IP" "echo ok" >/dev/null 2>&1; then
+                echo "SSH is up on $IP"
                 exit 0
               fi
+              echo "Waiting for SSH... $i/60"
               sleep 5
             done
 
+            echo "ERROR: SSH did not become available on $IP"
             exit 1
           '''
         }
@@ -123,7 +100,7 @@ EOF
 
             cat > "$ANS_DIR/inventory.ini" <<EOF
 [all]
-$IP ansible_user=$SSH_USER ansible_ssh_private_key_file=$SSH_KEY_FILE
+$IP ansible_user=$SSH_USER ansible_ssh_private_key_file=$SSH_KEY_FILE ansible_ssh_common_args='-o StrictHostKeyChecking=no'
 EOF
 
             ansible-playbook -i "$ANS_DIR/inventory.ini" "$ANS_DIR/playbook.yml" \
@@ -137,7 +114,9 @@ EOF
 
   post {
     always {
-      archiveArtifacts artifacts: 'Infrastructure/terraform/public_ip.txt', allowEmptyArchive: true
+      archiveArtifacts artifacts: 'Infrastructure/terraform/public_ip.txt, Infrastructure/terraform/terraform.tfvars, ansible/inventory.ini',
+        onlyIfSuccessful: false,
+        allowEmptyArchive: true
     }
   }
 }
