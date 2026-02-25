@@ -17,28 +17,42 @@ pipeline {
 
         stage('Build & Smoke test (local)') {
             steps {
-                sh '''
-                    set -e
-					echo "==> Create external Docker volumes (if not exist)"
-					
-					docker volume create pixname_pgdata || true
-					docker volume create pixname_grafana-storage || true
-					docker volume create infrastructure_redis_data || true
+                // ✅ withCredentials НА УРОВНЕ steps, а не внутри sh
+                withCredentials([string(credentialsId: 'huggingface-token', variable: 'HF_TOKEN')]) {
+                    sh '''
+                        set -e
+                        echo "==> Create external Docker volumes (if not exist)"
+                        
+                        docker volume create pixname_pgdata || true
+                        docker volume create pixname_grafana-storage || true
+                        docker volume create infrastructure_redis_data || true
 
-                    echo "==> Local docker-compose build & smoke test"
+                        echo "==> Local docker-compose build & smoke test"
+                        cd Infrastructure
+                        docker compose down -v || true
+                        
+                        // ✅ Передаём HF_TOKEN в окружение docker-compose
+                        HF_TOKEN=$HF_TOKEN docker compose up -d --build
 
-                    cd Infrastructure
-                    docker compose down -v || true
-                    docker compose up -d --build
-
-                    echo "==> Waiting for ML service"
-                    sleep 20
-
-                    echo "==> Curl /api/health"
-                    curl -f http://localhost:8000/api/health
-                '''
+                        echo "==> Waiting for ML service to be ready"
+                        // ✅ Увеличиваем ожидание + цикл с проверкой
+                        for i in $(seq 1 30); do
+                            echo "==> Health check attempt $i"
+                            if curl -sf http://localhost:8000/health; then
+                                echo "✅ ML service is healthy!"
+                                exit 0
+                            fi
+                            echo "⏳ Service not ready yet, sleep 10s"
+                            sleep 10
+                        done
+                        echo "❌ ML service health check failed"
+                        docker compose logs ml-core-service
+                        exit 1
+                    '''
+                }
             }
         }
+
 
         stage('Terraform: provision infra') {
             steps {
