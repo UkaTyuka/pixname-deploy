@@ -105,5 +105,5 @@ volumes:  # ← На этом уровне (без отступа)
     name: pixname_pgdata
   grafana-storage:
     external: true
-    name: pixname_grafana-storag
+    name: pixname_grafana-storage
   hf_cache:
