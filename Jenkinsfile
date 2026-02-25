@@ -163,7 +163,7 @@ EOF
                                 -i inventory.ini \\
                                 -e "hf_token=${HF_TOKEN}" \\
                                 playbook.yml
-                        """
+                        """}
                     }
                 }
             }
