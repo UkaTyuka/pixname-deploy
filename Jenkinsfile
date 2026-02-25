@@ -29,7 +29,7 @@ pipeline {
 
                         echo "==> Local docker-compose build & smoke test"
                         cd Infrastructure
-                        docker compose down -v || true
+                        docker compose down || true
                         
                         # ✅ Передаём HF_TOKEN в окружение docker-compose
                         HF_TOKEN=$HF_TOKEN docker compose up -d --build
