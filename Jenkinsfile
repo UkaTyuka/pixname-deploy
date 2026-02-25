@@ -80,6 +80,9 @@ network_name  = "sutdents-net"
 public_ssh_key = "$(cat /home/ubuntu/.ssh/id_rsa.pub)"
 EOF
 
+
+                        export TF_PLUGIN_CACHE_DIR=/home/ubuntu/.terraform.d/plugins
+                        
                         echo "==> Terraform init"
                         terraform init -input=false
 
