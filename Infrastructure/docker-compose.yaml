@@ -24,6 +24,13 @@ services:
       - redis_data:/data
 
   ml-core-service:
+      volumes:
+    - hf_cache:/root/.cache/huggingface  # ← Кэш моделей
+      environment:
+        - HF_TOKEN=${HF_TOKEN}  # ← Передаётся из окружения Jenkins
+    
+      volumes:
+        hf_cache:  # ← Persistent volume
     build:
       context: ../ml-core-service
       dockerfile: Dockerfile
