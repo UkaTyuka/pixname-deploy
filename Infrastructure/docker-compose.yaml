@@ -36,7 +36,7 @@ services:
       redis:
         condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/health || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/health"]
       interval: 50s
       timeout: 20s
       retries: 20
