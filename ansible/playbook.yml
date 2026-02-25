@@ -96,9 +96,12 @@
     - name: Build and start application stack
       shell: |
         cd {{ app_dir }}/Infrastructure
+        export HF_TOKEN={{ hf_token }}
         docker-compose up -d --build
       args:
         chdir: "{{ app_dir }}/Infrastructure"
+      environment:
+        HF_TOKEN: "{{ hf_token }}"
 
     - name: Wait for services to start
       wait_for:
