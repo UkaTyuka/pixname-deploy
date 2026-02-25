@@ -86,12 +86,12 @@ EOF
 
                         mkdir -p /home/ubuntu/.terraform.d/plugins
                         chown -R ubuntu:ubuntu /home/ubuntu/.terraform.d
+                        chmod -R 755 /home/ubuntu/.terraform.d
 
-                        export TF_PLUGIN_CACHE_DIR=/home/ubuntu/.terraform.d/plugins
+                        export TF_PLUGIN_CACHE_DIR=/home/ubuntu/.terraform.d/plugins && \
+                        export TF_DATA_DIR=/home/ubuntu/.terraform.d/data && \
 
-                        if grep -q "registry.terraform.io/terraform-provider-openstack" versions.tf 2>/dev/null; then
-                            sed -i 's|registry.terraform.io/terraform-provider-openstack|terraform-provider-openstack|g' versions.tf
-                        fi
+                        
 
                         echo "==> Terraform init"
                         terraform init -input=false
