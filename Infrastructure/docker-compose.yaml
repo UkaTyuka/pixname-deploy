@@ -24,19 +24,22 @@ services:
       - redis_data:/data
 
   ml-core-service:
-      volumes:
-    - hf_cache:/root/.cache/huggingface  # ← Кэш моделей
-      environment:
-        - HF_TOKEN=${HF_TOKEN}  # ← Передаётся из окружения Jenkins
-    
-      volumes:
-        hf_cache:  # ← Persistent volume
+     
     build:
       context: ../ml-core-service
       dockerfile: Dockerfile
     image: ml-core-service:latest
     ports:
       - "8000:8080"   # наружу
+
+    environment:
+      - DATABASE_URL=postgresql://user:password@db:5432/pixname
+      - REDIS_URL=redis://redis:6379/0
+      - HF_TOKEN=${HF_TOKEN}  # ← ДОБАВИТЬ: токен для скачивания моделей
+    volumes:
+      - hf_cache:/root/.cache/huggingface  
+
+      
     depends_on:
       db:
         condition: service_healthy
@@ -97,3 +100,13 @@ volumes:
   pixname_grafana-storage:
     external: true
   redis_data:
+    pgdata:
+    external: true
+    name: pixname_pgdata
+  grafana-storage:
+    external: true
+    name: pixname_grafana-storage
+  redis_data:
+    external: true
+    name: infrastructure_redis_data
+  hf_cache:
