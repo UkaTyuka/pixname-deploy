@@ -80,7 +80,7 @@ EOF
             steps {
                 script {
                     def vmIp = sh(
-                        script: "cd openstack && terraform output -raw Pixname-terraform_ip",
+                        script: "cd openstack && terraform output -raw pixname-node",
                         returnStdout: true
                     ).trim()
 
@@ -108,7 +108,7 @@ EOF
             steps {
                 script {
                     def vmIp = sh(
-                        script: "cd openstack && terraform output -raw Pixname-terraform_ip",
+                        script: "cd openstack && terraform output -raw pixname-node",
                         returnStdout: true
                     ).trim()
 
