@@ -94,16 +94,11 @@ services:
     ports:
       - "80:80"
 
-volumes:
+volumes:  # ← На этом уровне (без отступа)
   pixname_pgdata:
     external: true
   pixname_grafana-storage:
     external: true
   redis_data:
-    pgdata:
     external: true
-    name: pixname_pgdata
-  grafana-storage:
-    external: true
-    name: pixname_grafana-storage
   hf_cache:
