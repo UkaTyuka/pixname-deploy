@@ -17,7 +17,7 @@ pipeline {
 
         stage('Build & Smoke test (local)') {
             steps {
-                # ✅ withCredentials НА УРОВНЕ steps, а не внутри sh
+                // ✅ withCredentials НА УРОВНЕ steps, а не внутри sh
                 withCredentials([string(credentialsId: 'huggingface-token', variable: 'HF_TOKEN')]) {
                     sh '''
                         set -e
