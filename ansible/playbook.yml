@@ -96,7 +96,7 @@
     - name: Build and start application stack
       shell: |
         cd {{ app_dir }}/Infrastructure
-        export HF_TOKEN={{ hf_token }}
+        echo "HF_TOKEN={{ hf_token }}" > .env
         docker-compose up -d --build
       args:
         chdir: "{{ app_dir }}/Infrastructure"
