@@ -135,37 +135,39 @@ EOF
 
         stage('Ansible: deploy to img_description VM') {
             steps {
-                script {
-                    def vmIp = sh(
-                        script: "cd openstack && terraform output -raw pixname-vm",
-                        returnStdout: true
-                    ).trim()
-
-                    echo "VM IP from Terraform: ${vmIp}"
-
-                    sh """
-                        set -e
-
-                        # Clean old host key for this IP
-                        mkdir -p ~/.ssh
-                        ssh-keygen -R ${vmIp} || true
-
-                        cd ansible
-
-                        echo "==> Generate inventory.ini"
-                        cat > inventory.ini <<EOF
-[img_description]
-${vmIp} ansible_user=ubuntu ansible_ssh_private_key_file=${SSH_KEY_PATH}
-EOF
-
-                        echo "==> Run ansible-playbook"
-                        ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory.ini -e "hf_token=${HF_TOKEN}" playbook.yml
-                    """
+                withCredentials([string(credentialsId: 'huggingface-token', variable: 'HF_TOKEN')]) {
+                    script {
+                        def vmIp = sh(
+                            script: "cd openstack && terraform output -raw pixname-vm",
+                            returnStdout: true
+                        ).trim()
+        
+                        echo "VM IP from Terraform: ${vmIp}"
+        
+                        sh """
+                            set -e
+                            mkdir -p ~/.ssh
+                            ssh-keygen -R ${vmIp} || true
+        
+                            cd ansible
+        
+                            echo "==> Generate inventory.ini"
+                            cat > inventory.ini <<EOF
+        [img_description]
+        ${vmIp} ansible_user=ubuntu ansible_ssh_private_key_file=${SSH_KEY_PATH}
+        EOF
+        
+                            echo "==> Run ansible-playbook"
+                            # ✅ Передать HF_TOKEN в Ansible через -e
+                            ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook \\
+                                -i inventory.ini \\
+                                -e "hf_token=${HF_TOKEN}" \\
+                                playbook.yml
+                        """
+                    }
                 }
             }
         }
-    }
-
     post {
         success {
             echo "✅ Pipeline SUCCESS: img_description_deploy build → infra → deploy completed."
