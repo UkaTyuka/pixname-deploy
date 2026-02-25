@@ -159,7 +159,7 @@ ${vmIp} ansible_user=ubuntu ansible_ssh_private_key_file=${SSH_KEY_PATH}
 EOF
 
                         echo "==> Run ansible-playbook"
-                        ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory.ini playbook.yml
+                        ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory.ini -e "hf_token=${HF_TOKEN}" playbook.yml
                     """
                 }
             }
