@@ -100,7 +100,6 @@ volumes:  # ← На этом уровне (без отступа)
   pixname_grafana-storage:
     external: true
   redis_data:
-    pgdata:
     external: true
     name: pixname_pgdata
   grafana-storage:
