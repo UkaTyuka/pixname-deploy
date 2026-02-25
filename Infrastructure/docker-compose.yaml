@@ -29,14 +29,14 @@ services:
       dockerfile: Dockerfile
     image: ml-core-service:latest
     ports:
-      - "8000:8000"   # наружу
+      - "8000:8080"   # наружу
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/health"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/health"]
       interval: 50s
       timeout: 20s
       retries: 20
