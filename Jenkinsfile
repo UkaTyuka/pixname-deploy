@@ -5,6 +5,8 @@ pipeline {
         PYTHONNOUSERSITE          = "1"
         SSH_KEY_PATH              = "/home/ubuntu/.ssh/id_rsa"
         ANSIBLE_HOST_KEY_CHECKING = "False"
+        TF_PLUGIN_CACHE_DIR       = "/home/ubuntu/.terraform.d/plugins"
+        TF_DATA_DIR               = "/home/ubuntu/.terraform.d/data"
     }
 
     stages {
