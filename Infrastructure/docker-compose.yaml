@@ -29,7 +29,7 @@ services:
       dockerfile: Dockerfile
     image: ml-core-service:latest
     ports:
-      - "8000:8080"   # наружу
+      - "8000:8000"   # наружу
     depends_on:
       db:
         condition: service_healthy
