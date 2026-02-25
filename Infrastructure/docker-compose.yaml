@@ -106,7 +106,4 @@ volumes:
   grafana-storage:
     external: true
     name: pixname_grafana-storage
-  redis_data:
-    external: true
-    name: infrastructure_redis_data
   hf_cache:
