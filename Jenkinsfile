@@ -17,7 +17,7 @@ pipeline {
 
         stage('Build & Smoke test (local)') {
             steps {
-                // ✅ withCredentials НА УРОВНЕ steps, а не внутри sh
+                # ✅ withCredentials НА УРОВНЕ steps, а не внутри sh
                 withCredentials([string(credentialsId: 'huggingface-token', variable: 'HF_TOKEN')]) {
                     sh '''
                         set -e
@@ -31,11 +31,11 @@ pipeline {
                         cd Infrastructure
                         docker compose down -v || true
                         
-                        // ✅ Передаём HF_TOKEN в окружение docker-compose
+                        # ✅ Передаём HF_TOKEN в окружение docker-compose
                         HF_TOKEN=$HF_TOKEN docker compose up -d --build
 
                         echo "==> Waiting for ML service to be ready"
-                        // ✅ Увеличиваем ожидание + цикл с проверкой
+                        # ✅ Увеличиваем ожидание + цикл с проверкой
                         for i in $(seq 1 30); do
                             echo "==> Health check attempt $i"
                             if curl -sf http://localhost:8000/health; then
